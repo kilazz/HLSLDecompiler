@@ -17,17 +17,15 @@
 
 using namespace std;
 
-struct shader_ins
-{
+struct shader_ins {
 	unsigned opcode : 11;
 	unsigned _11_23 : 13;
 	unsigned length : 7;
 	unsigned extended : 1;
 };
-struct token_operand
-{
+struct token_operand {
 	unsigned comps_enum : 2; /* sm4_operands_comps */
-	unsigned mode : 2; /* sm4_operand_mode */
+	unsigned mode : 2;		 /* sm4_operand_mode */
 	unsigned sel : 8;
 	unsigned file : 8; /* SM_FILE */
 	unsigned num_indices : 2;
@@ -39,8 +37,8 @@ struct token_operand
 
 vector<DWORD> assembleIns(string s);
 vector<byte> readFile(string fileName);
-vector<DWORD> ComputeHash(byte const* input, DWORD size);
-vector<string> stringToLines(const char* start, size_t size);
+vector<DWORD> ComputeHash(byte const *input, DWORD size);
+vector<string> stringToLines(const char *start, size_t size);
 DWORD strToDWORD(string s);
 string convertF(DWORD original);
 HRESULT disassembler(vector<byte> *buffer, vector<byte> *ret, const char *comment);

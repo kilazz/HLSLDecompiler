@@ -20,7 +20,7 @@ vector<string> enumerateFiles(string pathName, string filter = "") {
 	string sName = pathName;
 	sName.append(filter);
 	hFind = FindFirstFileA(sName.c_str(), &FindFileData);
-	if (hFind != INVALID_HANDLE_VALUE)	{
+	if (hFind != INVALID_HANDLE_VALUE) {
 		string fName = pathName;
 		fName.append(FindFileData.cFileName);
 		files.push_back(fName);
@@ -34,13 +34,12 @@ vector<string> enumerateFiles(string pathName, string filter = "") {
 	return files;
 }
 
-int _tmain(int argc, _TCHAR* argv[])
-{
+int _tmain(int argc, _TCHAR *argv[]) {
 	int shaderNo = 1;
 	vector<string> gameNames;
 	string pathName;
 	vector<string> files;
-	FILE* f;
+	FILE *f;
 	char cwd[MAX_PATH];
 	char gamebuffer[10000];
 
@@ -79,11 +78,11 @@ int _tmain(int argc, _TCHAR* argv[])
 
 				fileName.erase(fileName.size() - 3, 3);
 				fileName.append("txt");
-				FILE* f;
+				FILE *f;
 				fopen_s(&f, fileName.c_str(), "wb");
 				fwrite(ASM.data(), 1, ASM.size(), f);
 				fclose(f);
-				
+
 				int newProgress = (int)(50.0 * i / files.size());
 				if (newProgress > progress) {
 					cout << ".";
@@ -106,12 +105,12 @@ int _tmain(int argc, _TCHAR* argv[])
 				fileName.erase(fileName.size() - 3, 3);
 				fileName.append("bin");
 				auto BIN = readFile(fileName);
-				
+
 				auto CBO = assembler(ASM, BIN);
 
 				fileName.erase(fileName.size() - 3, 3);
 				fileName.append("cbo");
-				FILE* f;
+				FILE *f;
 				fopen_s(&f, fileName.c_str(), "wb");
 				if (f) {
 					fwrite(CBO.data(), 1, CBO.size(), f);
@@ -141,7 +140,7 @@ int _tmain(int argc, _TCHAR* argv[])
 
 				fileName.erase(fileName.size() - 3, 3);
 				fileName.append("txt");
-				FILE* f;
+				FILE *f;
 				fopen_s(&f, fileName.c_str(), "wb");
 				if (f) {
 					fwrite(ASM.data(), 1, ASM.size(), f);

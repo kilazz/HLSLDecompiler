@@ -9,11 +9,10 @@
 // Let's use these constants instead of hard coded numbers, so that we can use safe versions
 // of sprintf_s, sscanf_s, strcpy_s
 
-const int opcodeSize = 128;
+const int opcodeSize = 512;
 const int stringSize = 256;
 
-struct ParseParameters
-{
+struct ParseParameters {
 	const void *bytecode;
 	const char *decompiled;
 	size_t decompiledSize;
