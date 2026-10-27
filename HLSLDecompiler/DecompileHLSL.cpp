@@ -182,7 +182,7 @@ class Decompiler {
 	const char *indent = "  ";
 	int nestCount;
 
-	// Statement operand buffers and pointer aliases
+	// Statement operand storage buffers and pointer array for loop-based parsing
 	char statement[128];
 	char op1[opcodeSize], op2[opcodeSize], op3[opcodeSize], op4[opcodeSize], op5[opcodeSize], op6[opcodeSize], op7[opcodeSize],
 		op8[opcodeSize], op9[opcodeSize], op10[opcodeSize], op11[opcodeSize], op12[opcodeSize], op13[opcodeSize], op14[opcodeSize],
@@ -783,6 +783,9 @@ class Decompiler {
 			mOutput.insert(mOutput.end(), mainFooter, mainFooter + strlen(mainFooter));
 
 			if (isDS) {
+				// FIX: Removed premature `mDSUnpackCode += "  }\n";` here!
+				// The _cp loop was already closed in ParseInputSignature. An extra `}` closed main() prematurely,
+				// pushing all instructions and temps to global file scope and causing X3000 on r0.
 				mOutput.insert(mOutput.end(), mDSUnpackCode.c_str(), mDSUnpackCode.c_str() + mDSUnpackCode.length());
 			}
 		}
@@ -1095,13 +1098,13 @@ class Decompiler {
 				if (strstr(buffer, " struct\n") || strstr(buffer, " struct ")) {
 					++structLevel;
 					mOutput.insert(mOutput.end(), '\n');
-					for (int i = -1; i < structLevel; ++i) {
+					for (int j = -1; j < structLevel; ++j) {
 						mOutput.insert(mOutput.end(), ' ');
 						mOutput.insert(mOutput.end(), ' ');
 					}
 					const char *structHeader = "struct\n";
 					mOutput.insert(mOutput.end(), structHeader, structHeader + strlen(structHeader));
-					for (int i = -1; i < structLevel; ++i) {
+					for (int j = -1; j < structLevel; ++j) {
 						mOutput.push_back(' ');
 						mOutput.push_back(' ');
 					}
@@ -1127,7 +1130,7 @@ class Decompiler {
 						sprintf_s(buffer + bpos, sizeof(buffer) - bpos, " : packoffset(c%d);\n\n", offset / 16);
 					else
 						sprintf_s(buffer + bpos, sizeof(buffer) - bpos, ";\n\n");
-					for (int i = -1; i < structLevel; ++i) {
+					for (int j = -1; j < structLevel; ++j) {
 						mOutput.push_back(' ');
 						mOutput.push_back(' ');
 					}
@@ -1135,11 +1138,11 @@ class Decompiler {
 
 					size_t arrayPos = structName.find('[');
 					if (arrayPos == string::npos) {
-						for (vector<int>::iterator i = pendingStructAttributes[structLevel].begin();
-							 i != pendingStructAttributes[structLevel].end(); ++i) {
-							mCBufferData[*i].Name = structName + mCBufferData[*i].Name;
+						for (vector<int>::iterator it = pendingStructAttributes[structLevel].begin();
+							 it != pendingStructAttributes[structLevel].end(); ++it) {
+							mCBufferData[*it].Name = structName + mCBufferData[*it].Name;
 							if (structLevel)
-								pendingStructAttributes[structLevel - 1].push_back(*i);
+								pendingStructAttributes[structLevel - 1].push_back(*it);
 						}
 					} else {
 						int arraySize;
@@ -1153,13 +1156,13 @@ class Decompiler {
 						for (vector<int>::iterator j = pendingStructAttributes[structLevel].begin();
 							 j != pendingStructAttributes[structLevel].end(); ++j)
 							structSize += getDataTypeSize(mCBufferData[*j].bt);
-						for (int i = arraySize - 1; i >= 0; --i) {
-							sprintf_s(buffer, sizeof(buffer), "%s[%d].", structName.c_str(), i);
+						for (int k = arraySize - 1; k >= 0; --k) {
+							sprintf_s(buffer, sizeof(buffer), "%s[%d].", structName.c_str(), k);
 							for (vector<int>::iterator j = pendingStructAttributes[structLevel].begin();
 								 j != pendingStructAttributes[structLevel].end(); ++j) {
-								mCBufferData[*j + i * structSize].Name = buffer + mCBufferData[*j].Name;
+								mCBufferData[*j + k * structSize].Name = buffer + mCBufferData[*j].Name;
 								if (structLevel)
-									pendingStructAttributes[structLevel - 1].push_back(*j + i * structSize);
+									pendingStructAttributes[structLevel - 1].push_back(*j + k * structSize);
 							}
 						}
 					}
@@ -1206,13 +1209,13 @@ class Decompiler {
 				e.bt = TranslateType(type);
 
 				// Uses projection matrix?
-				if (e.bt == DT_float4x4 && e.Name.find_first_of("Projection") >= 0) {
+				if (e.bt == DT_float4x4 && e.Name.find_first_of("Projection") != string::npos) {
 					eolPos = strchr(c + pos, '\n');
 					if (*(eolPos - 1) != ']')
 						mUsesProjection = true;
 				}
 				// SR3 variant of projection matrix.
-				if (e.bt == DT_float4x4 && e.Name.find_first_of("projTM") >= 0) {
+				if (e.bt == DT_float4x4 && e.Name.find_first_of("projTM") != string::npos) {
 					eolPos = strchr(c + pos, '\n');
 					if (*(eolPos - 1) != ']')
 						mUsesProjection = true;
@@ -1250,8 +1253,8 @@ class Decompiler {
 					if ((counter == 4 && numElements * counter < byteSize) || (counter == 12 && numElements * counter < byteSize))
 						counter = 16;
 
-					for (int i = 0; i < numElements; ++i) {
-						sprintf_s(buffer, sizeof(buffer), "%s[%d]", baseName.c_str(), i);
+					for (int k = 0; k < numElements; ++k) {
+						sprintf_s(buffer, sizeof(buffer), "%s[%d]", baseName.c_str(), k);
 						e.Name = buffer;
 						int offsetPos;
 						switch (e.bt) {
@@ -1259,31 +1262,31 @@ class Decompiler {
 						case DT_float3x4:
 						case DT_float2x4:
 							e.matrixRow = 3;
-							offsetPos = (bufferRegister << 16) + offset + i * counter + 3 * 16;
+							offsetPos = (bufferRegister << 16) + offset + k * counter + 3 * 16;
 							mCBufferData[offsetPos] = e;
 							if (structLevel >= 0)
 								pendingStructAttributes[structLevel].push_back(offsetPos);
 						case DT_float4x3:
 						case DT_float3x3:
 							e.matrixRow = 2;
-							offsetPos = (bufferRegister << 16) + offset + i * counter + 2 * 16;
+							offsetPos = (bufferRegister << 16) + offset + k * counter + 2 * 16;
 							mCBufferData[offsetPos] = e;
 							if (structLevel >= 0)
 								pendingStructAttributes[structLevel].push_back(offsetPos);
 						case DT_float4x2:
 							e.matrixRow = 1;
-							offsetPos = (bufferRegister << 16) + offset + i * counter + 1 * 16;
+							offsetPos = (bufferRegister << 16) + offset + k * counter + 1 * 16;
 							mCBufferData[offsetPos] = e;
 							if (structLevel >= 0)
 								pendingStructAttributes[structLevel].push_back(offsetPos);
 							e.matrixRow = 0;
-							offsetPos = (bufferRegister << 16) + offset + i * counter;
+							offsetPos = (bufferRegister << 16) + offset + k * counter;
 							mCBufferData[offsetPos] = e;
 							if (structLevel >= 0)
 								pendingStructAttributes[structLevel].push_back(offsetPos);
 							break;
 						default:
-							offsetPos = (bufferRegister << 16) + offset + i * counter;
+							offsetPos = (bufferRegister << 16) + offset + k * counter;
 							mCBufferData[offsetPos] = e;
 							if (structLevel >= 0)
 								pendingStructAttributes[structLevel].push_back(offsetPos);
@@ -1333,7 +1336,7 @@ class Decompiler {
 				int suboffset = (offset % 16) / 4;
 				const char INDEX_MASK[] = "xyzw";
 				string structSpacing;
-				for (int i = -1; i < structLevel; ++i)
+				for (int j = -1; j < structLevel; ++j)
 					structSpacing += "  ";
 
 				if (!strncmp(c + pos, defaultid, strlen(defaultid))) {
@@ -1371,8 +1374,8 @@ class Decompiler {
 						} else
 							sprintf_s(buffer, "  %s%s%s %s = {", structSpacing.c_str(), modifier.c_str(), type, name);
 						mOutput.insert(mOutput.end(), buffer, buffer + strlen(buffer));
-						for (int i = 0; i < numRead - 1; ++i) {
-							sprintf_s(buffer, "%i,", in[i]);
+						for (int j = 0; j < numRead - 1; ++j) {
+							sprintf_s(buffer, "%i,", in[j]);
 							mOutput.insert(mOutput.end(), buffer, buffer + strlen(buffer));
 						}
 						sprintf_s(buffer, "%i};\n", in[numRead - 1]);
@@ -1391,8 +1394,8 @@ class Decompiler {
 						} else
 							sprintf_s(buffer, "  %s%s%s %s = {", structSpacing.c_str(), modifier.c_str(), type, name);
 						mOutput.insert(mOutput.end(), buffer, buffer + strlen(buffer));
-						for (int i = 0; i < numRead - 1; ++i) {
-							sprintf_s(buffer, "%.9g,", v[i]);
+						for (int j = 0; j < numRead - 1; ++j) {
+							sprintf_s(buffer, "%.9g,", v[j]);
 							mOutput.insert(mOutput.end(), buffer, buffer + strlen(buffer));
 						}
 						sprintf_s(buffer, "%.9g};\n", v[numRead - 1]);
@@ -1401,12 +1404,12 @@ class Decompiler {
 					// Only 4x4 for now, known needed case.
 					else if (e.bt == DT_float4x4) {
 						float v[16];
-						for (size_t i = 0; i < 4; i++) {
+						for (size_t j = 0; j < 4; j++) {
 							numRead =
-								sscanf_s(c + pos, "//%*[ =]0x%lx 0x%lx 0x%lx 0x%lx", (unsigned long *)&v[i * 4 + 0],
-										 (unsigned long *)&v[i * 4 + 1], (unsigned long *)&v[i * 4 + 2], (unsigned long *)&v[i * 4 + 3]);
+								sscanf_s(c + pos, "//%*[ =]0x%lx 0x%lx 0x%lx 0x%lx", (unsigned long *)&v[j * 4 + 0],
+										 (unsigned long *)&v[j * 4 + 1], (unsigned long *)&v[j * 4 + 2], (unsigned long *)&v[j * 4 + 3]);
 							if (numRead != 4) {
-								logDecompileError("Default values for float4x4 not read correctly, n:" + numRead);
+								logDecompileError("Default values for float4x4 not read correctly, n:" + to_string(numRead));
 								break;
 							}
 							NextLine(c, pos, size);
@@ -1420,8 +1423,8 @@ class Decompiler {
 						} else
 							sprintf_s(buffer, "  %s%s%s %s = {", structSpacing.c_str(), modifier.c_str(), type, name);
 						mOutput.insert(mOutput.end(), buffer, buffer + strlen(buffer));
-						for (int i = 0; i < 16 - 1; ++i) {
-							sprintf_s(buffer, "%.9g,", v[i]);
+						for (int j = 0; j < 16 - 1; ++j) {
+							sprintf_s(buffer, "%.9g,", v[j]);
 							mOutput.insert(mOutput.end(), buffer, buffer + strlen(buffer));
 						}
 						sprintf_s(buffer, "%.9g};\n", v[15]);
@@ -1870,26 +1873,35 @@ class Decompiler {
 			ops[14][0] = 0;
 		}
 
-		// Reassembles broken l(...) arguments that had spaces.
-		for (int i = 0; i < 7; ++i) {
+		// Reassembles broken l(...) arguments that had spaces dynamically without stealing subsequent operands.
+		for (int i = 0; i < 15; ++i) {
+			if (!ops[i][0])
+				break;
 			size_t len = strlen(ops[i]);
-			if (!strncmp(ops[i], "l(", 2) && (len < 2 || (ops[i][len - 1] != ')' && ops[i][len - 2] != ')'))) {
-				strcat_s(ops[i], opcodeSize, " ");
-				strcat_s(ops[i], opcodeSize, ops[i + 1]);
-				strcat_s(ops[i], opcodeSize, " ");
-				strcat_s(ops[i], opcodeSize, ops[i + 2]);
-				strcat_s(ops[i], opcodeSize, " ");
-				strcat_s(ops[i], opcodeSize, ops[i + 3]);
-				for (int j = i + 1; j + 3 < 15; ++j)
-					strcpy_s(ops[j], opcodeSize, ops[j + 3]);
-				for (int j = 15 - 3; j < 15; ++j)
-					ops[j][0] = 0;
+			if (!strncmp(ops[i], "l(", 2) && len > 1 && ops[i][len - 1] != ')' && ops[i][len - 2] != ')') {
+				int consumeCount = 0;
+				for (int c = 1; c < 4 && (i + c) < 15 && ops[i + c][0]; ++c) {
+					strcat_s(ops[i], opcodeSize, " ");
+					strcat_s(ops[i], opcodeSize, ops[i + c]);
+					consumeCount++;
+					size_t newLen = strlen(ops[i]);
+					if (newLen > 0 && (ops[i][newLen - 1] == ')' || (newLen > 1 && ops[i][newLen - 2] == ')')))
+						break;
+				}
+				if (consumeCount > 0) {
+					for (int j = i + 1; j + consumeCount < 15; ++j)
+						strcpy_s(ops[j], opcodeSize, ops[j + consumeCount]);
+					for (int j = 15 - consumeCount; j < 15; ++j)
+						ops[j][0] = 0;
+				}
 			}
 		}
 
-		// Consolidate '+' tokens into operand additions
-		for (int i = 0; i < 5; ++i) {
-			while (!strcmp(ops[i + 1], "+")) {
+		// Consolidate '+' tokens into operand additions dynamically
+		for (int i = 0; i < 15; ++i) {
+			if (!ops[i][0])
+				break;
+			while ((i + 2) < 15 && !strcmp(ops[i + 1], "+")) {
 				strcat_s(ops[i], opcodeSize, ops[i + 1]);
 				strcat_s(ops[i], opcodeSize, ops[i + 2]);
 				for (int j = i + 1; j + 2 < 15; ++j)
@@ -2967,7 +2979,7 @@ class Decompiler {
 		unsigned int iNr = 0;
 		bool skip_shader = false;
 
-		// Deduplicated helper lambdas for opcode output formatting
+		// Deduplicated helper lambdas for concise, uniform, and warning-free instruction emission
 		auto emitUnaryMath = [&](const char *funcName, bool handleBool = true) {
 			remapTarget(op1);
 			applySwizzle(op1, op2);
@@ -3068,32 +3080,30 @@ class Decompiler {
 				NextLine(c, pos, size);
 				continue;
 			}
-			if (!strncmp(statement, "vs_", 3) || !strncmp(statement, "hs_", 3) || !strncmp(statement, "ds_", 3) ||
-				!strncmp(statement, "gs_", 3) || !strncmp(statement, "ps_", 3) || !strncmp(statement, "cs_", 3)) {
+			// First, check the Hull Shader phases so they aren't intercepted by the "hs_" check below
+			if (!strcmp(statement, "hs_control_point_phase")) {
+				mHSPhase = 1;
+				nestCount = 1;
+			} else if (!strcmp(statement, "hs_fork_phase") || !strcmp(statement, "hs_join_phase")) {
+				mHSPhase = 2;
+				nestCount = 1;
+			} else if (!strcmp(statement, "hs_decls")) {
+				// Handled in ParseCodeOnlyShaderType
+			} else if (!strncmp(statement, "vs_", 3) || !strncmp(statement, "hs_", 3) || !strncmp(statement, "ds_", 3) ||
+					   !strncmp(statement, "gs_", 3) || !strncmp(statement, "ps_", 3) || !strncmp(statement, "cs_", 3)) {
 				skip_shader = false;
 				mShaderType = statement;
 			} else if (skip_shader) {
 				NextLine(c, pos, size);
 				continue;
-			} else if (!strcmp(statement, "hs_control_point_phase")) {
-				mHSPhase = 1;
-				nestCount = 1;
-				if (iNr < shader->psInst.size() && shader->psInst[iNr].eOpcode == OPCODE_HS_CONTROL_POINT_PHASE)
-					iNr++;
-			} else if (!strcmp(statement, "hs_fork_phase") || !strcmp(statement, "hs_join_phase")) {
-				mHSPhase = 2;
-				nestCount = 1;
-				if (iNr < shader->psInst.size() &&
-					(shader->psInst[iNr].eOpcode == OPCODE_HS_FORK_PHASE || shader->psInst[iNr].eOpcode == OPCODE_HS_JOIN_PHASE))
-					iNr++;
 			} else if (!strcmp(statement, "}")) {
 				NextLine(c, pos, size);
 				continue;
 			} else if (!strcmp(statement, "hs_decls") || !strcmp(statement, "dcl_hs_max_tessfactor") ||
 					   !strcmp(statement, "dcl_input_control_point_count") || !strcmp(statement, "dcl_output_control_point_count") ||
 					   !strcmp(statement, "dcl_tessellator_partitioning") || !strcmp(statement, "dcl_tessellator_output_primitive") ||
-					   !strcmp(statement, "dcl_tessellator_domain")) {
-				// Handled in ParseCodeOnlyShaderType
+					   !strcmp(statement, "dcl_tessellator_domain") || !strcmp(statement, "dcl_hs_fork_phase_instance_count")) {
+				// Handled in ParseCodeOnlyShaderType or safely consumed without desyncing psInst.
 			} else if (!strcmp(statement, "dcl_immediateConstantBuffer")) {
 				sprintf_s(buffer, sizeof(buffer), "  const float4 icb[] =");
 				appendOutput(buffer);
@@ -3406,20 +3416,9 @@ class Decompiler {
 				int numTemps = 0;
 				sscanf_s(c + pos, "%s %d", statement, (int)sizeof(statement), &numTemps);
 				if (mShaderType.substr(0, 3) == "hs_") {
-					vector<int> newTemps;
 					set<int> &activeSet = (mHSPhase == 1) ? mDeclaredTempsHS_Main : mDeclaredTempsHS_Fork;
 					for (int i = 0; i < numTemps; ++i) {
-						if (activeSet.find(i) == activeSet.end()) {
-							activeSet.insert(i);
-							newTemps.push_back(i);
-						}
-					}
-					if (!newTemps.empty()) {
-						appendOutput("  float4 ");
-						for (size_t i = 0; i < newTemps.size(); ++i) {
-							sprintf_s(buffer, sizeof(buffer), "r%d%s", newTemps[i], (i + 1 == newTemps.size()) ? ";\n" : ", ");
-							appendOutput(buffer);
-						}
+						activeSet.insert(i);
 					}
 				} else {
 					if (numTemps > 0) {
@@ -3429,6 +3428,7 @@ class Decompiler {
 						}
 						appendOutput(tempDecl.c_str());
 					}
+					// Note: helperDecl (bitmask, uiDest, fDest) is already declared with = 0 in mainFooter!
 				}
 			}
 			// For Geometry Shaders, e.g. dcl_stream m0 TODO: make it StreamN, add to varlist
@@ -3458,98 +3458,105 @@ class Decompiler {
 					ASMLineOut(c, pos, size);
 				}
 			} else {
-				switch (instr->eOpcode) {
-				case OPCODE_DCL_HS_FORK_PHASE_INSTANCE_COUNT:
-				case OPCODE_HS_CONTROL_POINT_PHASE:
-				case OPCODE_HS_FORK_PHASE:
-				case OPCODE_HS_JOIN_PHASE:
-					// Just safely consume these opcodes if they made it into the instruction buffer
-					break;
-				case OPCODE_ITOF:
-					remapTarget(op1);
-					applySwizzle(op1, fixImm(op2, instr->asOperands[1]));
-					sprintf_s(buffer, sizeof(buffer), "  %s = %s;\n", writeTarget(op1), ci(convertToInt(op2)).c_str());
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
-				case OPCODE_UTOF:
-					remapTarget(op1);
-					applySwizzle(op1, fixImm(op2, instr->asOperands[1]));
-					sprintf_s(buffer, sizeof(buffer), "  %s = %s;\n", writeTarget(op1), ci(convertToUInt(op2)).c_str());
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
-				case OPCODE_MOV:
-					remapTarget(op1);
-					applySwizzle(op1, fixImm(op2, instr->asOperands[1]));
-					if (!instr->bSaturate)
-						sprintf_s(buffer, sizeof(buffer), "  %s = %s;\n", writeTarget(op1), ci(op2).c_str());
-					else
-						sprintf_s(buffer, sizeof(buffer), "  %s = saturate(%s);\n", writeTarget(op1), ci(op2).c_str());
-					appendOutput(buffer);
-					if (op1[0] == 'o') {
-						char *dotPos = strchr(op1, '.');
-						if (dotPos)
-							*dotPos = 0;
-						if (!dotPos || dotPos[1] == 'x')
-							mOutputRegisterValues[op1] = op2;
+				// Safely sync instruction pointer through phase-related pseudo opcodes if present in binary AST
+				while (iNr < shader->psInst.size()) {
+					if (shader->psInst[iNr].eOpcode == OPCODE_HS_CONTROL_POINT_PHASE ||
+						shader->psInst[iNr].eOpcode == OPCODE_HS_FORK_PHASE || shader->psInst[iNr].eOpcode == OPCODE_HS_JOIN_PHASE ||
+						shader->psInst[iNr].eOpcode == OPCODE_DCL_HS_FORK_PHASE_INSTANCE_COUNT) {
+						iNr++;
+						continue;
 					}
-					removeBoolean(op1);
 					break;
-				case OPCODE_RCP: emitUnaryMath("rcp", false); break;
-				case OPCODE_NOT:
-					remapTarget(op1);
-					applySwizzle(op1, op2);
-					sprintf_s(buffer, sizeof(buffer), "  %s = ~%s;\n", writeTarget(op1), ci(convertToInt(op2)).c_str());
-					appendOutput(buffer);
-					break;
-				case OPCODE_INEG:
-					remapTarget(op1);
-					applySwizzle(op1, op2, true);
-					sprintf_s(buffer, sizeof(buffer), "  %s = -%s;\n", writeTarget(op1), ci(convertToInt(op2)).c_str());
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
-				case OPCODE_F32TOF16: emitUnaryMath("f32tof16"); break;
-				case OPCODE_F16TOF32: emitUnaryMath("f16tof32"); break;
-				case OPCODE_FRC: emitUnaryMath("frac"); break;
-				case OPCODE_MUL:
-					remapTarget(op1);
-					applySwizzle(op1, fixImm(op2, instr->asOperands[1]));
-					applySwizzle(op1, fixImm(op3, instr->asOperands[2]));
-					mMulOperand = op3;
-					mMulOperand2 = op2;
-					mMulTarget = op1;
-					if (!instr->bSaturate)
-						sprintf_s(buffer, sizeof(buffer), "  %s = %s * %s;\n", writeTarget(op1), ci(op3).c_str(), ci(op2).c_str());
-					else
-						sprintf_s(buffer, sizeof(buffer), "  %s = saturate(%s * %s);\n", writeTarget(op1), ci(op3).c_str(),
-								  ci(op2).c_str());
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
-				case OPCODE_IMUL:
-					remapTarget(op2);
-					applySwizzle(op2, op3, true);
-					applySwizzle(op2, op4, true);
-					mMulOperand = strncmp(op3, "int", 3) ? op3 : op4;
-					sprintf_s(buffer, sizeof(buffer), "  %s = %s * %s;\n", writeTarget(op2), ci(convertToInt(op3)).c_str(),
-							  ci(convertToInt(op4)).c_str());
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
-				case OPCODE_DIV:
-					remapTarget(op1);
-					applySwizzle(op1, fixImm(op2, instr->asOperands[1]));
-					applySwizzle(op1, fixImm(op3, instr->asOperands[2]));
-					if (!instr->bSaturate)
-						sprintf_s(buffer, sizeof(buffer), "  %s = %s / %s;\n", writeTarget(op1), ci(op2).c_str(), ci(op3).c_str());
-					else
-						sprintf_s(buffer, sizeof(buffer), "  %s = saturate(%s / %s);\n", writeTarget(op1), ci(op2).c_str(),
-								  ci(op3).c_str());
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
+				}
+
+				if (iNr < shader->psInst.size()) {
+					instr = &shader->psInst[iNr];
+					switch (instr->eOpcode) {
+					case OPCODE_ITOF:
+						remapTarget(op1);
+						applySwizzle(op1, fixImm(op2, instr->asOperands[1]));
+						sprintf_s(buffer, sizeof(buffer), "  %s = %s;\n", writeTarget(op1), ci(convertToInt(op2)).c_str());
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
+					case OPCODE_UTOF:
+						remapTarget(op1);
+						applySwizzle(op1, fixImm(op2, instr->asOperands[1]));
+						sprintf_s(buffer, sizeof(buffer), "  %s = %s;\n", writeTarget(op1), ci(convertToUInt(op2)).c_str());
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
+					case OPCODE_MOV:
+						remapTarget(op1);
+						applySwizzle(op1, fixImm(op2, instr->asOperands[1]));
+						if (!instr->bSaturate)
+							sprintf_s(buffer, sizeof(buffer), "  %s = %s;\n", writeTarget(op1), ci(op2).c_str());
+						else
+							sprintf_s(buffer, sizeof(buffer), "  %s = saturate(%s);\n", writeTarget(op1), ci(op2).c_str());
+						appendOutput(buffer);
+						if (op1[0] == 'o') {
+							char *dotPos = strchr(op1, '.');
+							if (dotPos)
+								*dotPos = 0;
+							if (!dotPos || dotPos[1] == 'x')
+								mOutputRegisterValues[op1] = op2;
+						}
+						removeBoolean(op1);
+						break;
+					case OPCODE_RCP: emitUnaryMath("rcp", false); break;
+					case OPCODE_NOT:
+						remapTarget(op1);
+						applySwizzle(op1, op2);
+						sprintf_s(buffer, sizeof(buffer), "  %s = ~%s;\n", writeTarget(op1), ci(convertToInt(op2)).c_str());
+						appendOutput(buffer);
+						break;
+					case OPCODE_INEG:
+						remapTarget(op1);
+						applySwizzle(op1, op2, true);
+						sprintf_s(buffer, sizeof(buffer), "  %s = -%s;\n", writeTarget(op1), ci(convertToInt(op2)).c_str());
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
+					case OPCODE_F32TOF16: emitUnaryMath("f32tof16"); break;
+					case OPCODE_F16TOF32: emitUnaryMath("f16tof32"); break;
+					case OPCODE_FRC: emitUnaryMath("frac"); break;
+					case OPCODE_MUL:
+						remapTarget(op1);
+						applySwizzle(op1, fixImm(op2, instr->asOperands[1]));
+						applySwizzle(op1, fixImm(op3, instr->asOperands[2]));
+						mMulOperand = op3;
+						mMulOperand2 = op2;
+						mMulTarget = op1;
+						if (!instr->bSaturate)
+							sprintf_s(buffer, sizeof(buffer), "  %s = %s * %s;\n", writeTarget(op1), ci(op3).c_str(), ci(op2).c_str());
+						else
+							sprintf_s(buffer, sizeof(buffer), "  %s = saturate(%s * %s);\n", writeTarget(op1), ci(op3).c_str(),
+									  ci(op2).c_str());
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
+					case OPCODE_IMUL:
+						remapTarget(op2);
+						applySwizzle(op2, op3, true);
+						applySwizzle(op2, op4, true);
+						mMulOperand = strncmp(op3, "int", 3) ? op3 : op4;
+						sprintf_s(buffer, sizeof(buffer), "  %s = %s * %s;\n", writeTarget(op2), ci(convertToInt(op3)).c_str(),
+								  ci(convertToInt(op4)).c_str());
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
+					case OPCODE_DIV:
+						remapTarget(op1);
+						applySwizzle(op1, fixImm(op2, instr->asOperands[1]));
+						applySwizzle(op1, fixImm(op3, instr->asOperands[2]));
+						if (!instr->bSaturate)
+							sprintf_s(buffer, sizeof(buffer), "  %s = %s / %s;\n", writeTarget(op1), ci(op2).c_str(), ci(op3).c_str());
+						else
+							sprintf_s(buffer, sizeof(buffer), "  %s = saturate(%s / %s);\n", writeTarget(op1), ci(op2).c_str(),
+									  ci(op3).c_str());
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
 
 					// UDIV instruction also could damage the original register before finishing, giving wrong results.
 					// e.g. udiv r0.x, r1.x, r0.x, r0.y
@@ -3566,58 +3573,58 @@ class Decompiler {
 					// parts required for each half, as the safest approach. Might not generate udiv though.
 					// Also removed saturate code, because udiv does not specify that.
 					// Creates operand copies to applySwizzle to unchanged operands, as constant l values are otherwise damaged.
-				case OPCODE_UDIV: {
-					remapTarget(op1);
-					remapTarget(op2);
-					char divOut[opcodeSize] = "uiDest.xyzw";
-					char *divSwiz = op1;
-					char *remSwiz = op2;
-					strcpy_s(op13, opcodeSize, op3);
-					strcpy_s(op14, opcodeSize, op4);
-					if (instr->asOperands[0].eType != OPERAND_TYPE_NULL) {
-						applySwizzle(divSwiz, divOut, true);
-						applySwizzle(divSwiz, fixImm(op13, instr->asOperands[2]), true);
-						applySwizzle(divSwiz, fixImm(op14, instr->asOperands[3]), true);
-						convertToUInt(op13);
-						convertToUInt(op14);
-						sprintf_s(buffer, sizeof(buffer), "  %s = %s / %s;\n", divOut, ci(op13).c_str(), ci(op14).c_str());
-						appendOutput(buffer);
-					}
-					if (instr->asOperands[1].eType != OPERAND_TYPE_NULL) {
-						applySwizzle(remSwiz, fixImm(op3, instr->asOperands[2]), true);
-						applySwizzle(remSwiz, fixImm(op4, instr->asOperands[3]), true);
-						convertToUInt(op3);
-						convertToUInt(op4);
-						sprintf_s(buffer, sizeof(buffer), "  %s = %s %% %s;\n", writeTarget(op2), ci(op3).c_str(), ci(op4).c_str());
-						appendOutput(buffer);
-					}
-					if (instr->asOperands[0].eType != OPERAND_TYPE_NULL) {
-						sprintf_s(buffer, sizeof(buffer), "  %s = %s;\n", writeTarget(op1), divOut);
-						appendOutput(buffer);
-					}
-					removeBoolean(op1);
-					removeBoolean(op2);
-					break;
-				}
-				case OPCODE_ADD:
-					// OPCODE_ADD is 0. Therefore, it is possible for us to arrive here if the line has simply not been parsed.
-					// Let's make sure we are actually parsing an 'add' before we go any further.
-					if (strncmp(statement, "add", 3)) {
-						sprintf_s(buffer, sizeof(buffer), "// Unknown statement (maybe desync?): %s\n", statement);
-						appendOutput(buffer);
+					case OPCODE_UDIV: {
+						remapTarget(op1);
+						remapTarget(op2);
+						char divOut[opcodeSize] = "uiDest.xyzw";
+						char *divSwiz = op1;
+						char *remSwiz = op2;
+						strcpy_s(op13, opcodeSize, op3);
+						strcpy_s(op14, opcodeSize, op4);
+						if (instr->asOperands[0].eType != OPERAND_TYPE_NULL) {
+							applySwizzle(divSwiz, divOut, true);
+							applySwizzle(divSwiz, fixImm(op13, instr->asOperands[2]), true);
+							applySwizzle(divSwiz, fixImm(op14, instr->asOperands[3]), true);
+							convertToUInt(op13);
+							convertToUInt(op14);
+							sprintf_s(buffer, sizeof(buffer), "  %s = %s / %s;\n", divOut, ci(op13).c_str(), ci(op14).c_str());
+							appendOutput(buffer);
+						}
+						if (instr->asOperands[1].eType != OPERAND_TYPE_NULL) {
+							applySwizzle(remSwiz, fixImm(op3, instr->asOperands[2]), true);
+							applySwizzle(remSwiz, fixImm(op4, instr->asOperands[3]), true);
+							convertToUInt(op3);
+							convertToUInt(op4);
+							sprintf_s(buffer, sizeof(buffer), "  %s = %s %% %s;\n", writeTarget(op2), ci(op3).c_str(), ci(op4).c_str());
+							appendOutput(buffer);
+						}
+						if (instr->asOperands[0].eType != OPERAND_TYPE_NULL) {
+							sprintf_s(buffer, sizeof(buffer), "  %s = %s;\n", writeTarget(op1), divOut);
+							appendOutput(buffer);
+						}
+						removeBoolean(op1);
+						removeBoolean(op2);
 						break;
 					}
-					remapTarget(op1);
-					applySwizzle(op1, fixImm(op2, instr->asOperands[1]));
-					applySwizzle(op1, fixImm(op3, instr->asOperands[2]));
-					if (!instr->bSaturate)
-						sprintf_s(buffer, sizeof(buffer), "  %s = %s + %s;\n", writeTarget(op1), ci(op3).c_str(), ci(op2).c_str());
-					else
-						sprintf_s(buffer, sizeof(buffer), "  %s = saturate(%s + %s);\n", writeTarget(op1), ci(op3).c_str(),
-								  ci(op2).c_str());
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
+					case OPCODE_ADD:
+						// OPCODE_ADD is 0. Therefore, it is possible for us to arrive here if the line has simply not been parsed.
+						// Let's make sure we are actually parsing an 'add' before we go any further.
+						if (strncmp(statement, "add", 3)) {
+							sprintf_s(buffer, sizeof(buffer), "// Unknown statement (maybe desync?): %s\n", statement);
+							appendOutput(buffer);
+							break;
+						}
+						remapTarget(op1);
+						applySwizzle(op1, fixImm(op2, instr->asOperands[1]));
+						applySwizzle(op1, fixImm(op3, instr->asOperands[2]));
+						if (!instr->bSaturate)
+							sprintf_s(buffer, sizeof(buffer), "  %s = %s + %s;\n", writeTarget(op1), ci(op3).c_str(), ci(op2).c_str());
+						else
+							sprintf_s(buffer, sizeof(buffer), "  %s = saturate(%s + %s);\n", writeTarget(op1), ci(op3).c_str(),
+									  ci(op2).c_str());
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
 
 					// IADD is apparently used by the fxc compiler in some cases like an AND operation.
 					// After boolean operations, it will sum up two boolean operators. Since we are now
@@ -3628,15 +3635,15 @@ class Decompiler {
 					//  iadd r0.x, r0.x, -r0.y
 					//  itof r0.x, r0.x
 					//  mul r0.xyz, r0.xxxx, r1.xzwx
-				case OPCODE_IADD:
-					remapTarget(op1);
-					applySwizzle(op1, op2, true);
-					applySwizzle(op1, op3, true);
-					sprintf_s(buffer, sizeof(buffer), "  %s = %s + %s;\n", writeTarget(op1), ci(convertToInt(op2)).c_str(),
-							  ci(convertToInt(op3)).c_str());
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
+					case OPCODE_IADD:
+						remapTarget(op1);
+						applySwizzle(op1, op2, true);
+						applySwizzle(op1, op3, true);
+						sprintf_s(buffer, sizeof(buffer), "  %s = %s + %s;\n", writeTarget(op1), ci(convertToInt(op2)).c_str(),
+								  ci(convertToInt(op3)).c_str());
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
 
 					// AND opcodes were generating bad code, as the hex constants were being converted badly.
 					// The most common case was 0x3f800000 being converted directly to integer decimal of 1065353216, instead
@@ -3647,1121 +3654,1119 @@ class Decompiler {
 					// if they are to be used in boolean operations. We make a copy of the incoming operands, so that we
 					// can applySwizzle in order to be able to look up isBoolean properly. Can be r3.xxxy, and becomes r3.xy.
 					// That applySwizzle damages constants though, so if we are boolean, we'll use the original l() value.
-				case OPCODE_AND:
-					remapTarget(op1);
-					strcpy_s(op12, op2);
-					strcpy_s(op13, op3);
-					applySwizzle(op1, op2);
-					applySwizzle(op1, op3);
-					if (isBoolean(op2) || isBoolean(op3)) {
-						convertHexToFloat(op12);
-						convertHexToFloat(op13);
-						applySwizzle(op1, op12);
-						applySwizzle(op1, op13);
-						char *cmp = isBoolean(op2) ? op12 : op13;
-						char *arg = isBoolean(op2) ? op13 : op12;
-						sprintf_s(buffer, sizeof(buffer), "  %s = %s ? %s : 0;\n", writeTarget(op1), ci(cmp).c_str(), ci(arg).c_str());
-						appendOutput(buffer);
-					} else {
-						sprintf_s(buffer, sizeof(buffer), "  %s = %s & %s;\n", writeTarget(op1), ci(convertToInt(op2)).c_str(),
+					case OPCODE_AND:
+						remapTarget(op1);
+						strcpy_s(op12, op2);
+						strcpy_s(op13, op3);
+						applySwizzle(op1, op2);
+						applySwizzle(op1, op3);
+						if (isBoolean(op2) || isBoolean(op3)) {
+							convertHexToFloat(op12);
+							convertHexToFloat(op13);
+							applySwizzle(op1, op12);
+							applySwizzle(op1, op13);
+							char *cmp = isBoolean(op2) ? op12 : op13;
+							char *arg = isBoolean(op2) ? op13 : op12;
+							sprintf_s(buffer, sizeof(buffer), "  %s = %s ? %s : 0;\n", writeTarget(op1), ci(cmp).c_str(), ci(arg).c_str());
+							appendOutput(buffer);
+						} else {
+							sprintf_s(buffer, sizeof(buffer), "  %s = %s & %s;\n", writeTarget(op1), ci(convertToInt(op2)).c_str(),
+									  ci(convertToInt(op3)).c_str());
+							appendOutput(buffer);
+						}
+						break;
+
+					case OPCODE_OR:
+						remapTarget(op1);
+						applySwizzle(op1, op2);
+						applySwizzle(op1, op3);
+						sprintf_s(buffer, sizeof(buffer), "  %s = %s | %s;\n", writeTarget(op1), ci(convertToInt(op2)).c_str(),
 								  ci(convertToInt(op3)).c_str());
 						appendOutput(buffer);
-					}
-					break;
+						break;
 
-				case OPCODE_OR:
-					remapTarget(op1);
-					applySwizzle(op1, op2);
-					applySwizzle(op1, op3);
-					sprintf_s(buffer, sizeof(buffer), "  %s = %s | %s;\n", writeTarget(op1), ci(convertToInt(op2)).c_str(),
-							  ci(convertToInt(op3)).c_str());
-					appendOutput(buffer);
-					break;
-
-				case OPCODE_XOR:
-					remapTarget(op1);
-					applySwizzle(op1, op2);
-					applySwizzle(op1, op3);
-					sprintf_s(buffer, sizeof(buffer), "  %s = %s ^ %s;\n", writeTarget(op1), ci(convertToInt(op2)).c_str(),
-							  ci(convertToInt(op3)).c_str());
-					appendOutput(buffer);
-					break;
+					case OPCODE_XOR:
+						remapTarget(op1);
+						applySwizzle(op1, op2);
+						applySwizzle(op1, op3);
+						sprintf_s(buffer, sizeof(buffer), "  %s = %s ^ %s;\n", writeTarget(op1), ci(convertToInt(op2)).c_str(),
+								  ci(convertToInt(op3)).c_str());
+						appendOutput(buffer);
+						break;
 
 					// Curiously enough, the documentation for ISHR and ISHL is wrong, and documents the parameters backwards.
 					// http://msdn.microsoft.com/en-us/library/windows/desktop/hh447145(v=vs.85).aspx
 					// This was proven by looking at actual game ASM, and trying to make the HLSL match the generated ASM.
 					// It is the C standard of: shift-expression << additive-expression
 					// So, we need op2 as the Shift-Expression, op3 as the # of bits to shift.
-				case OPCODE_ISHR:
-					remapTarget(op1);
-					applySwizzle(op1, op2, true);
-					applySwizzle(op1, op3, true);
-					sprintf_s(buffer, sizeof(buffer), "  %s = %s >> %s;\n", writeTarget(op1), ci(convertToUInt(op2)).c_str(),
-							  ci(convertToInt(op3)).c_str());
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
+					case OPCODE_ISHR:
+						remapTarget(op1);
+						applySwizzle(op1, op2, true);
+						applySwizzle(op1, op3, true);
+						sprintf_s(buffer, sizeof(buffer), "  %s = %s >> %s;\n", writeTarget(op1), ci(convertToUInt(op2)).c_str(),
+								  ci(convertToInt(op3)).c_str());
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
 
-				case OPCODE_ISHL:
-					remapTarget(op1);
-					applySwizzle(op1, op2, true);
-					applySwizzle(op1, op3, true);
-					sprintf_s(buffer, sizeof(buffer), "  %s = %s << %s;\n", writeTarget(op1), ci(convertToUInt(op2)).c_str(),
-							  ci(convertToInt(op3)).c_str());
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
+					case OPCODE_ISHL:
+						remapTarget(op1);
+						applySwizzle(op1, op2, true);
+						applySwizzle(op1, op3, true);
+						sprintf_s(buffer, sizeof(buffer), "  %s = %s << %s;\n", writeTarget(op1), ci(convertToUInt(op2)).c_str(),
+								  ci(convertToInt(op3)).c_str());
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
 
 					// USHR appears to be documented correctly. But this code was previously backwards.
-				case OPCODE_USHR:
-					remapTarget(op1);
-					applySwizzle(op1, op2, true);
-					applySwizzle(op1, op3, true);
-					sprintf_s(buffer, sizeof(buffer), "  %s = %s >> %s;\n", writeTarget(op1), ci(convertToUInt(op2)).c_str(),
-							  ci(convertToUInt(op3)).c_str());
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
+					case OPCODE_USHR:
+						remapTarget(op1);
+						applySwizzle(op1, op2, true);
+						applySwizzle(op1, op3, true);
+						sprintf_s(buffer, sizeof(buffer), "  %s = %s >> %s;\n", writeTarget(op1), ci(convertToUInt(op2)).c_str(),
+								  ci(convertToUInt(op3)).c_str());
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
 
 					// Add the Firstbit ops, because now Just Cause 3 uses them.
 					// firstbit{_hi|_lo|_shi} dest[.mask], src0[.swizzle]
-				case OPCODE_FIRSTBIT_HI:
-					remapTarget(op1);
-					applySwizzle(op1, op2, true);
-					sprintf_s(buffer, sizeof(buffer), "  %s = firstbithigh(%s);\n", writeTarget(op1), ci(convertToUInt(op2)).c_str());
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
-				case OPCODE_FIRSTBIT_LO:
-					remapTarget(op1);
-					applySwizzle(op1, op2, true);
-					sprintf_s(buffer, sizeof(buffer), "  %s = firstbitlow(%s);\n", writeTarget(op1), ci(convertToUInt(op2)).c_str());
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
-				case OPCODE_FIRSTBIT_SHI:
-					remapTarget(op1);
-					applySwizzle(op1, op2, true);
-					sprintf_s(buffer, sizeof(buffer), "  %s = firstbithigh(%s);\n", writeTarget(op1), ci(convertToInt(op2)).c_str());
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
+					case OPCODE_FIRSTBIT_HI:
+						remapTarget(op1);
+						applySwizzle(op1, op2, true);
+						sprintf_s(buffer, sizeof(buffer), "  %s = firstbithigh(%s);\n", writeTarget(op1), ci(convertToUInt(op2)).c_str());
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
+					case OPCODE_FIRSTBIT_LO:
+						remapTarget(op1);
+						applySwizzle(op1, op2, true);
+						sprintf_s(buffer, sizeof(buffer), "  %s = firstbitlow(%s);\n", writeTarget(op1), ci(convertToUInt(op2)).c_str());
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
+					case OPCODE_FIRSTBIT_SHI:
+						remapTarget(op1);
+						applySwizzle(op1, op2, true);
+						sprintf_s(buffer, sizeof(buffer), "  %s = firstbithigh(%s);\n", writeTarget(op1), ci(convertToInt(op2)).c_str());
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
 
 					// Code generation for this weird instruction is tuned to indent the way we want,
 					// and still look like a single instruction. Looks like a less powerful version of rlwinm.
-				case OPCODE_UBFE: {
-					remapTarget(op1);
-					removeBoolean(op1);
-					applySwizzle(op1, op2);
-					applySwizzle(op1, op3);
-					applySwizzle(op1, op4);
-					int idx = 0;
-					char *pop1 = strrchr(op1, '.');
-					*pop1 = 0;
-					while (*++pop1) {
-						sprintf_s(op5, sizeof(op5), "%s.%c", op1, *pop1);
-						sprintf_s(buffer, sizeof(buffer),
-								  "  if (%s == 0) %s = 0; else if (%s+%s < 32) { %s = (uint)%s << (32-(%s + %s)); %s = (uint)%s >> "
-								  "(32-%s); } else %s = (uint)%s >> %s;\n",
-								  ci(GetSuffix(op2, idx)).c_str(), writeTarget(op5), ci(GetSuffix(op2, idx)).c_str(),
-								  ci(GetSuffix(op3, idx)).c_str(), writeTarget(op5), ci(GetSuffix(op4, idx)).c_str(),
-								  ci(GetSuffix(op2, idx)).c_str(), ci(GetSuffix(op3, idx)).c_str(), writeTarget(op5), writeTarget(op5),
-								  ci(GetSuffix(op2, idx)).c_str(), writeTarget(op5), ci(GetSuffix(op4, idx)).c_str(),
-								  ci(GetSuffix(op3, idx)).c_str());
-						appendOutput(buffer);
-						++idx;
+					case OPCODE_UBFE: {
+						remapTarget(op1);
+						removeBoolean(op1);
+						applySwizzle(op1, op2);
+						applySwizzle(op1, op3);
+						applySwizzle(op1, op4);
+						int idx = 0;
+						char *pop1 = strrchr(op1, '.');
+						*pop1 = 0;
+						while (*++pop1) {
+							sprintf_s(op5, sizeof(op5), "%s.%c", op1, *pop1);
+							sprintf_s(buffer, sizeof(buffer),
+									  "  if (%s == 0) %s = 0; else if (%s+%s < 32) { %s = (uint)%s << (32-(%s + %s)); %s = (uint)%s >> "
+									  "(32-%s); } else %s = (uint)%s >> %s;\n",
+									  ci(GetSuffix(op2, idx)).c_str(), writeTarget(op5), ci(GetSuffix(op2, idx)).c_str(),
+									  ci(GetSuffix(op3, idx)).c_str(), writeTarget(op5), ci(GetSuffix(op4, idx)).c_str(),
+									  ci(GetSuffix(op2, idx)).c_str(), ci(GetSuffix(op3, idx)).c_str(), writeTarget(op5), writeTarget(op5),
+									  ci(GetSuffix(op2, idx)).c_str(), writeTarget(op5), ci(GetSuffix(op4, idx)).c_str(),
+									  ci(GetSuffix(op3, idx)).c_str());
+							appendOutput(buffer);
+							++idx;
+						}
+						break;
 					}
-					break;
-				}
-				case OPCODE_IBFE: {
-					// Instruction for sign extending field extraction. Used in new versions of Dolphin
-					// ibfe r0.xyzw, l(24, 24, 24, 24), l(0, 0, 0, 0), cb0[12].xyzw
-					remapTarget(op1);
-					removeBoolean(op1);
-					applySwizzle(op1, op2, true);
-					applySwizzle(op1, op3, true);
-					applySwizzle(op1, op4);
-					sprintf_s(buffer, sizeof(buffer),
-							  "  %s = (%s == 0 ? 0 : (%s + %s < 32 ? (((int%s)%s << (32 - %s - %s)) >> (32 - %s)) : ((int%s)%s >> %s)));\n",
-							  writeTarget(op1), ci(op2).c_str(), ci(op2).c_str(), ci(op3).c_str(), swizCount(op4).c_str(), ci(op4).c_str(),
-							  ci(op2).c_str(), ci(op3).c_str(), ci(op2).c_str(), swizCount(op4).c_str(), ci(op4).c_str(), ci(op3).c_str());
-					appendOutput(buffer);
-					break;
-				}
-				case OPCODE_BFREV:
-					remapTarget(op1);
-					applySwizzle(op1, op2);
-					sprintf_s(buffer, sizeof(buffer), "  %s = reversebits(%s);\n", writeTarget(op1), ci(convertToUInt(op2)).c_str());
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
-				case OPCODE_EXP: emitUnaryMath("exp2"); break;
-				case OPCODE_LOG:
-					emitUnaryMath("log2");
-					break;
+					case OPCODE_IBFE: {
+						// Instruction for sign extending field extraction. Used in new versions of Dolphin
+						// ibfe r0.xyzw, l(24, 24, 24, 24), l(0, 0, 0, 0), cb0[12].xyzw
+						remapTarget(op1);
+						removeBoolean(op1);
+						applySwizzle(op1, op2, true);
+						applySwizzle(op1, op3, true);
+						applySwizzle(op1, op4);
+						sprintf_s(
+							buffer, sizeof(buffer),
+							"  %s = (%s == 0 ? 0 : (%s + %s < 32 ? (((int%s)%s << (32 - %s - %s)) >> (32 - %s)) : ((int%s)%s >> %s)));\n",
+							writeTarget(op1), ci(op2).c_str(), ci(op2).c_str(), ci(op3).c_str(), swizCount(op4).c_str(), ci(op4).c_str(),
+							ci(op2).c_str(), ci(op3).c_str(), ci(op2).c_str(), swizCount(op4).c_str(), ci(op4).c_str(), ci(op3).c_str());
+						appendOutput(buffer);
+						break;
+					}
+					case OPCODE_BFREV:
+						remapTarget(op1);
+						applySwizzle(op1, op2);
+						sprintf_s(buffer, sizeof(buffer), "  %s = reversebits(%s);\n", writeTarget(op1), ci(convertToUInt(op2)).c_str());
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
+					case OPCODE_EXP: emitUnaryMath("exp2"); break;
+					case OPCODE_LOG: emitUnaryMath("log2"); break;
 
 					// Opcodes for Sqrt, Min, Max, IMin, IMax code the generated HLSL directly
 					// to avoid saturation name bugs (e.g. max_sat).
-				case OPCODE_SQRT: emitUnaryMath("sqrt"); break;
-
-				case OPCODE_MIN:
-					remapTarget(op1);
-					applySwizzle(op1, fixImm(op2, instr->asOperands[1]));
-					applySwizzle(op1, fixImm(op3, instr->asOperands[2]));
-					if (!instr->bSaturate)
-						sprintf_s(buffer, sizeof(buffer), "  %s = min(%s, %s);\n", writeTarget(op1), ci(op3).c_str(), ci(op2).c_str());
-					else
-						sprintf_s(buffer, sizeof(buffer), "  %s = saturate(min(%s, %s));\n", writeTarget(op1), ci(op3).c_str(),
-								  ci(op2).c_str());
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
+					case OPCODE_SQRT: emitUnaryMath("sqrt"); break;
+					case OPCODE_MIN:
+						remapTarget(op1);
+						applySwizzle(op1, fixImm(op2, instr->asOperands[1]));
+						applySwizzle(op1, fixImm(op3, instr->asOperands[2]));
+						if (!instr->bSaturate)
+							sprintf_s(buffer, sizeof(buffer), "  %s = min(%s, %s);\n", writeTarget(op1), ci(op3).c_str(), ci(op2).c_str());
+						else
+							sprintf_s(buffer, sizeof(buffer), "  %s = saturate(min(%s, %s));\n", writeTarget(op1), ci(op3).c_str(),
+									  ci(op2).c_str());
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
 
 					// Missing opcode for UMin, used in Dragon Age
-				case OPCODE_UMIN:
-					remapTarget(op1);
-					applySwizzle(op1, fixImm(op2, instr->asOperands[1]));
-					applySwizzle(op1, fixImm(op3, instr->asOperands[2]));
-					sprintf_s(buffer, sizeof(buffer), "  %s = min(%s, %s);\n", writeTarget(op1), ci(convertToUInt(op3)).c_str(),
-							  ci(convertToUInt(op2)).c_str());
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
+					case OPCODE_UMIN:
+						remapTarget(op1);
+						applySwizzle(op1, fixImm(op2, instr->asOperands[1]));
+						applySwizzle(op1, fixImm(op3, instr->asOperands[2]));
+						sprintf_s(buffer, sizeof(buffer), "  %s = min(%s, %s);\n", writeTarget(op1), ci(convertToUInt(op3)).c_str(),
+								  ci(convertToUInt(op2)).c_str());
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
 
 					// Missing opcode for UMax, used in Witcher3
-				case OPCODE_UMAX:
-					remapTarget(op1);
-					applySwizzle(op1, fixImm(op2, instr->asOperands[1]));
-					applySwizzle(op1, fixImm(op3, instr->asOperands[2]));
-					sprintf_s(buffer, sizeof(buffer), "  %s = max(%s, %s);\n", writeTarget(op1), ci(convertToUInt(op3)).c_str(),
-							  ci(convertToUInt(op2)).c_str());
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
+					case OPCODE_UMAX:
+						remapTarget(op1);
+						applySwizzle(op1, fixImm(op2, instr->asOperands[1]));
+						applySwizzle(op1, fixImm(op3, instr->asOperands[2]));
+						sprintf_s(buffer, sizeof(buffer), "  %s = max(%s, %s);\n", writeTarget(op1), ci(convertToUInt(op3)).c_str(),
+								  ci(convertToUInt(op2)).c_str());
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
 
 					// Atomic ops found in Compute Shaders (Witcher 3, Song of the Deep)
-				case OPCODE_ATOMIC_AND: emitAtomicStub("InterlockedAnd(dest, value, orig_value);"); break;
-				case OPCODE_ATOMIC_OR: emitAtomicStub("InterlockedOr(dest, value, orig_value);"); break;
-				case OPCODE_ATOMIC_XOR: emitAtomicStub("InterlockedXor(dest, value, orig_value);"); break;
-				case OPCODE_ATOMIC_CMP_STORE: emitAtomicStub("InterlockedCompareStore(dest, value, orig_value);"); break;
-				case OPCODE_ATOMIC_IADD: emitAtomicStub("InterlockedAdd(dest, value, orig_value);"); break;
-				case OPCODE_ATOMIC_IMAX: emitAtomicStub("InterlockedMax(dest, value, orig_value);"); break;
-				case OPCODE_ATOMIC_IMIN: emitAtomicStub("InterlockedMin(dest, value, orig_value);"); break;
-				case OPCODE_ATOMIC_UMAX: emitAtomicStub("InterlockedMax(dest, value, orig_value);"); break;
-				case OPCODE_ATOMIC_UMIN: emitAtomicStub("InterlockedMin(dest, value, orig_value);"); break;
-				case OPCODE_IMM_ATOMIC_ALLOC: emitAtomicStub("InterlockedExchange ?(dest, value, orig_value);"); break;
-				case OPCODE_IMM_ATOMIC_CONSUME: emitAtomicStub("Interlocked... ?(dest, value, orig_value);"); break;
-				case OPCODE_IMM_ATOMIC_IADD: emitAtomicStub("InterlockedAdd(dest, imm_value, orig_value);"); break;
-				case OPCODE_IMM_ATOMIC_AND: emitAtomicStub("InterlockedAnd(dest, imm_value, orig_value);"); break;
-				case OPCODE_IMM_ATOMIC_OR: emitAtomicStub("InterlockedOr(dest, imm_value, orig_value);"); break;
-				case OPCODE_IMM_ATOMIC_XOR: emitAtomicStub("InterlockedXor(dest, imm_value, orig_value);"); break;
-				case OPCODE_IMM_ATOMIC_EXCH: emitAtomicStub("InterlockedExchange(dest, imm_value, orig_value);"); break;
-				case OPCODE_IMM_ATOMIC_CMP_EXCH:
-					emitAtomicStub("InterlockedCompareExchange(dest, compare_value, imm_value, orig_value);");
-					break;
-				case OPCODE_IMM_ATOMIC_IMAX: emitAtomicStub("InterlockedMax(dest, imm_value, orig_value);"); break;
-				case OPCODE_IMM_ATOMIC_IMIN: emitAtomicStub("InterlockedMin(dest, imm_value, orig_value);"); break;
-				case OPCODE_IMM_ATOMIC_UMAX: emitAtomicStub("InterlockedMax(dest, imm_value, orig_value);"); break;
-				case OPCODE_IMM_ATOMIC_UMIN: emitAtomicStub("InterlockedMin(dest, imm_value, orig_value);"); break;
-				case OPCODE_MAX:
-					remapTarget(op1);
-					applySwizzle(op1, fixImm(op2, instr->asOperands[1]));
-					applySwizzle(op1, fixImm(op3, instr->asOperands[2]));
-					if (!instr->bSaturate)
-						sprintf_s(buffer, sizeof(buffer), "  %s = max(%s, %s);\n", writeTarget(op1), ci(op3).c_str(), ci(op2).c_str());
-					else
-						sprintf_s(buffer, sizeof(buffer), "  %s = saturate(max(%s, %s));\n", writeTarget(op1), ci(op3).c_str(),
-								  ci(op2).c_str());
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
-				case OPCODE_IMIN:
-					remapTarget(op1);
-					applySwizzle(op1, fixImm(op2, instr->asOperands[1]), true);
-					applySwizzle(op1, fixImm(op3, instr->asOperands[2]), true);
-					if (!instr->bSaturate)
-						sprintf_s(buffer, sizeof(buffer), "  %s = min(%s, %s);\n", writeTarget(op1), ci(convertToInt(op3)).c_str(),
-								  ci(convertToInt(op2)).c_str());
-					else
-						sprintf_s(buffer, sizeof(buffer), "  %s = saturate(min(%s, %s));\n", writeTarget(op1),
-								  ci(convertToInt(op3)).c_str(), ci(convertToInt(op2)).c_str());
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
-				case OPCODE_IMAX:
-					remapTarget(op1);
-					applySwizzle(op1, fixImm(op2, instr->asOperands[1]), true);
-					applySwizzle(op1, fixImm(op3, instr->asOperands[2]), true);
-					if (!instr->bSaturate)
-						sprintf_s(buffer, sizeof(buffer), "  %s = max(%s, %s);\n", writeTarget(op1), ci(convertToInt(op3)).c_str(),
-								  ci(convertToInt(op2)).c_str());
-					else
-						sprintf_s(buffer, sizeof(buffer), "  %s = saturate(max(%s, %s));\n", writeTarget(op1),
-								  ci(convertToInt(op3)).c_str(), ci(convertToInt(op2)).c_str());
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
-				case OPCODE_MAD:
-					remapTarget(op1);
-					applySwizzle(op1, fixImm(op2, instr->asOperands[1]));
-					applySwizzle(op1, fixImm(op3, instr->asOperands[2]));
-					applySwizzle(op1, fixImm(op4, instr->asOperands[3]));
-					if (!instr->bSaturate)
-						sprintf_s(buffer, sizeof(buffer), "  %s = %s * %s + %s;\n", writeTarget(op1), ci(op2).c_str(), ci(op3).c_str(),
-								  ci(op4).c_str());
-					else
-						sprintf_s(buffer, sizeof(buffer), "  %s = saturate(%s * %s + %s);\n", writeTarget(op1), ci(op2).c_str(),
-								  ci(op3).c_str(), ci(op4).c_str());
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
-				case OPCODE_IMAD:
-					remapTarget(op1);
-					applySwizzle(op1, op2, true);
-					applySwizzle(op1, op3, true);
-					applySwizzle(op1, op4, true);
-					sprintf_s(buffer, sizeof(buffer), "  %s = mad(%s, %s, %s);\n", writeTarget(op1), ci(convertToInt(op2)).c_str(),
-							  ci(convertToInt(op3)).c_str(), ci(convertToInt(op4)).c_str());
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
-				case OPCODE_UMAD:
-					remapTarget(op1);
-					applySwizzle(op1, op2, true);
-					applySwizzle(op1, op3, true);
-					applySwizzle(op1, op4, true);
-					sprintf_s(buffer, sizeof(buffer), "  %s = mad(%s, %s, %s);\n", writeTarget(op1), ci(convertToUInt(op2)).c_str(),
-							  ci(convertToUInt(op3)).c_str(), ci(convertToUInt(op4)).c_str());
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
-				case OPCODE_DP2: emitDot(instr, ".xy"); break;
-				case OPCODE_DP3: emitDot(instr, ".xyz"); break;
-				case OPCODE_DP4: emitDot(instr, ".xyzw"); break;
-				case OPCODE_RSQ: emitUnaryMath("rsqrt"); break;
+					case OPCODE_ATOMIC_AND: emitAtomicStub("InterlockedAnd(dest, value, orig_value);"); break;
+					case OPCODE_ATOMIC_OR: emitAtomicStub("InterlockedOr(dest, value, orig_value);"); break;
+					case OPCODE_ATOMIC_XOR: emitAtomicStub("InterlockedXor(dest, value, orig_value);"); break;
+					case OPCODE_ATOMIC_CMP_STORE: emitAtomicStub("InterlockedCompareStore(dest, value, orig_value);"); break;
+					case OPCODE_ATOMIC_IADD: emitAtomicStub("InterlockedAdd(dest, value, orig_value);"); break;
+					case OPCODE_ATOMIC_IMAX: emitAtomicStub("InterlockedMax(dest, value, orig_value);"); break;
+					case OPCODE_ATOMIC_IMIN: emitAtomicStub("InterlockedMin(dest, value, orig_value);"); break;
+					case OPCODE_ATOMIC_UMAX: emitAtomicStub("InterlockedMax(dest, value, orig_value);"); break;
+					case OPCODE_ATOMIC_UMIN: emitAtomicStub("InterlockedMin(dest, value, orig_value);"); break;
+					case OPCODE_IMM_ATOMIC_ALLOC: emitAtomicStub("InterlockedExchange ?(dest, value, orig_value);"); break;
+					case OPCODE_IMM_ATOMIC_CONSUME: emitAtomicStub("Interlocked... ?(dest, value, orig_value);"); break;
+					case OPCODE_IMM_ATOMIC_IADD: emitAtomicStub("InterlockedAdd(dest, imm_value, orig_value);"); break;
+					case OPCODE_IMM_ATOMIC_AND: emitAtomicStub("InterlockedAnd(dest, imm_value, orig_value);"); break;
+					case OPCODE_IMM_ATOMIC_OR: emitAtomicStub("InterlockedOr(dest, imm_value, orig_value);"); break;
+					case OPCODE_IMM_ATOMIC_XOR: emitAtomicStub("InterlockedXor(dest, imm_value, orig_value);"); break;
+					case OPCODE_IMM_ATOMIC_EXCH: emitAtomicStub("InterlockedExchange(dest, imm_value, orig_value);"); break;
+					case OPCODE_IMM_ATOMIC_CMP_EXCH:
+						emitAtomicStub("InterlockedCompareExchange(dest, compare_value, imm_value, orig_value);");
+						break;
+					case OPCODE_IMM_ATOMIC_IMAX: emitAtomicStub("InterlockedMax(dest, imm_value, orig_value);"); break;
+					case OPCODE_IMM_ATOMIC_IMIN: emitAtomicStub("InterlockedMin(dest, imm_value, orig_value);"); break;
+					case OPCODE_IMM_ATOMIC_UMAX: emitAtomicStub("InterlockedMax(dest, imm_value, orig_value);"); break;
+					case OPCODE_IMM_ATOMIC_UMIN: emitAtomicStub("InterlockedMin(dest, imm_value, orig_value);"); break;
+					case OPCODE_MAX:
+						remapTarget(op1);
+						applySwizzle(op1, fixImm(op2, instr->asOperands[1]));
+						applySwizzle(op1, fixImm(op3, instr->asOperands[2]));
+						if (!instr->bSaturate)
+							sprintf_s(buffer, sizeof(buffer), "  %s = max(%s, %s);\n", writeTarget(op1), ci(op3).c_str(), ci(op2).c_str());
+						else
+							sprintf_s(buffer, sizeof(buffer), "  %s = saturate(max(%s, %s));\n", writeTarget(op1), ci(op3).c_str(),
+									  ci(op2).c_str());
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
+					case OPCODE_IMIN:
+						remapTarget(op1);
+						applySwizzle(op1, fixImm(op2, instr->asOperands[1]), true);
+						applySwizzle(op1, fixImm(op3, instr->asOperands[2]), true);
+						if (!instr->bSaturate)
+							sprintf_s(buffer, sizeof(buffer), "  %s = min(%s, %s);\n", writeTarget(op1), ci(convertToInt(op3)).c_str(),
+									  ci(convertToInt(op2)).c_str());
+						else
+							sprintf_s(buffer, sizeof(buffer), "  %s = saturate(min(%s, %s));\n", writeTarget(op1),
+									  ci(convertToInt(op3)).c_str(), ci(convertToInt(op2)).c_str());
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
+					case OPCODE_IMAX:
+						remapTarget(op1);
+						applySwizzle(op1, fixImm(op2, instr->asOperands[1]), true);
+						applySwizzle(op1, fixImm(op3, instr->asOperands[2]), true);
+						if (!instr->bSaturate)
+							sprintf_s(buffer, sizeof(buffer), "  %s = max(%s, %s);\n", writeTarget(op1), ci(convertToInt(op3)).c_str(),
+									  ci(convertToInt(op2)).c_str());
+						else
+							sprintf_s(buffer, sizeof(buffer), "  %s = saturate(max(%s, %s));\n", writeTarget(op1),
+									  ci(convertToInt(op3)).c_str(), ci(convertToInt(op2)).c_str());
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
+					case OPCODE_MAD:
+						remapTarget(op1);
+						applySwizzle(op1, fixImm(op2, instr->asOperands[1]));
+						applySwizzle(op1, fixImm(op3, instr->asOperands[2]));
+						applySwizzle(op1, fixImm(op4, instr->asOperands[3]));
+						if (!instr->bSaturate)
+							sprintf_s(buffer, sizeof(buffer), "  %s = %s * %s + %s;\n", writeTarget(op1), ci(op2).c_str(), ci(op3).c_str(),
+									  ci(op4).c_str());
+						else
+							sprintf_s(buffer, sizeof(buffer), "  %s = saturate(%s * %s + %s);\n", writeTarget(op1), ci(op2).c_str(),
+									  ci(op3).c_str(), ci(op4).c_str());
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
+					case OPCODE_IMAD:
+						remapTarget(op1);
+						applySwizzle(op1, op2, true);
+						applySwizzle(op1, op3, true);
+						applySwizzle(op1, op4, true);
+						sprintf_s(buffer, sizeof(buffer), "  %s = mad(%s, %s, %s);\n", writeTarget(op1), ci(convertToInt(op2)).c_str(),
+								  ci(convertToInt(op3)).c_str(), ci(convertToInt(op4)).c_str());
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
+					case OPCODE_UMAD:
+						remapTarget(op1);
+						applySwizzle(op1, op2, true);
+						applySwizzle(op1, op3, true);
+						applySwizzle(op1, op4, true);
+						sprintf_s(buffer, sizeof(buffer), "  %s = mad(%s, %s, %s);\n", writeTarget(op1), ci(convertToUInt(op2)).c_str(),
+								  ci(convertToUInt(op3)).c_str(), ci(convertToUInt(op4)).c_str());
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
+					case OPCODE_DP2: emitDot(instr, ".xy"); break;
+					case OPCODE_DP3: emitDot(instr, ".xyz"); break;
+					case OPCODE_DP4: emitDot(instr, ".xyzw"); break;
+					case OPCODE_RSQ: emitUnaryMath("rsqrt"); break;
 
-				// Double checked this while looking at other round bugs. Looks correct to use 'floor'.
-				case OPCODE_ROUND_NI: emitUnaryMath("floor"); break;
+					// Double checked this while looking at other round bugs. Looks correct to use 'floor'.
+					case OPCODE_ROUND_NI: emitUnaryMath("floor"); break;
+					case OPCODE_ROUND_PI: emitUnaryMath("ceil"); break;
 
-				case OPCODE_ROUND_PI: emitUnaryMath("ceil"); break;
+					// Needs to round toward zero (Trunc), Round can go larger. Trunc(1.6)->1.0, Round(1.6)->2.0
+					case OPCODE_ROUND_Z: emitUnaryMath("trunc"); break;
 
-				// Needs to round toward zero (Trunc), Round can go larger. Trunc(1.6)->1.0, Round(1.6)->2.0
-				case OPCODE_ROUND_Z: emitUnaryMath("trunc"); break;
+					// Round Nearest Even (HLSL round)
+					case OPCODE_ROUND_NE: emitUnaryMath("round"); break;
+					case OPCODE_FTOI:
+						remapTarget(op1);
+						applySwizzle(op1, op2);
+						sprintf_s(buffer, sizeof(buffer), "  %s = %s;\n", writeTarget(op1), ci(castToInt(op2)).c_str());
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
+					case OPCODE_FTOU:
+						remapTarget(op1);
+						applySwizzle(op1, op2);
+						sprintf_s(buffer, sizeof(buffer), "  %s = %s;\n", writeTarget(op1), ci(castToUInt(op2)).c_str());
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
+					case OPCODE_SINCOS:
+						remapTarget(op1);
+						remapTarget(op2);
+						if (!strncmp(op1, "null", 4))
+							applySwizzle(op2, op3);
+						else
+							applySwizzle(op1, op3);
+						if (!strncmp(op1, "null", 4))
+							sprintf_s(buffer, sizeof(buffer), "  %s = cos(%s);\n", writeTarget(op2), ci(op3).c_str());
+						else if (!strncmp(op2, "null", 4))
+							sprintf_s(buffer, sizeof(buffer), "  %s = sin(%s);\n", writeTarget(op1), ci(op3).c_str());
+						else
+							sprintf_s(buffer, sizeof(buffer), "  sincos(%s, %s, %s);\n", ci(op3).c_str(), writeTarget(op1),
+									  writeTarget(op2));
+						appendOutput(buffer);
+						removeBoolean(op1);
+						removeBoolean(op2);
+						break;
 
-				// Round Nearest Even (HLSL round)
-				case OPCODE_ROUND_NE: emitUnaryMath("round"); break;
+					// Failing case of: "movc_sat r2.xyzw, r2.xxxx, r7.xyzw, r4.xyzw"
+					// Unrolling damaged r2.x at the first line and then reused it in each.
+					// Changed to single vector assignment: r2.xyzw = saturate(r2.xxxx ? r7.xyzw : r4.xyzw);
+					case OPCODE_MOVC: {
+						remapTarget(op1);
+						applySwizzle(op1, fixImm(op2, instr->asOperands[1]));
+						applySwizzle(op1, fixImm(op3, instr->asOperands[2]));
+						applySwizzle(op1, fixImm(op4, instr->asOperands[3]));
+						if (!instr->bSaturate)
+							sprintf_s(buffer, sizeof(buffer), "  %s = %s ? %s : %s;\n", writeTarget(op1), ci(op2).c_str(), ci(op3).c_str(),
+									  ci(op4).c_str());
+						else
+							sprintf_s(buffer, sizeof(buffer), "  %s = saturate(%s ? %s : %s);\n", writeTarget(op1), ci(op2).c_str(),
+									  ci(op3).c_str(), ci(op4).c_str());
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
+					}
 
-				case OPCODE_FTOI:
-					remapTarget(op1);
-					applySwizzle(op1, op2);
-					sprintf_s(buffer, sizeof(buffer), "  %s = %s;\n", writeTarget(op1), ci(castToInt(op2)).c_str());
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
-				case OPCODE_FTOU:
-					remapTarget(op1);
-					applySwizzle(op1, op2);
-					sprintf_s(buffer, sizeof(buffer), "  %s = %s;\n", writeTarget(op1), ci(castToUInt(op2)).c_str());
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
-				case OPCODE_SINCOS:
-					remapTarget(op1);
-					remapTarget(op2);
-					if (!strncmp(op1, "null", 4))
-						applySwizzle(op2, op3);
-					else
+					// Big change to all these boolean test opcodes. All were unrolled and generated a code line per component.
+					// To make the boolean tests work correctly for AND, these were rolled back into one, and added to the boolean
+					// set list as a complete operand, like 'r0.xyw'.
+					case OPCODE_NE: emitComparison(instr, "!="); break;
+					case OPCODE_INE: emitComparison(instr, "!=", true, false); break;
+					case OPCODE_EQ: emitComparison(instr, "=="); break;
+					case OPCODE_IEQ: emitComparison(instr, "==", true, false); break;
+					case OPCODE_LT: emitComparison(instr, "<"); break;
+					case OPCODE_ILT: emitComparison(instr, "<", true, false); break;
+					case OPCODE_ULT: emitComparison(instr, "<", false, true); break;
+					case OPCODE_GE: emitComparison(instr, ">="); break;
+					case OPCODE_IGE: emitComparison(instr, ">=", true, false); break;
+					case OPCODE_UGE: emitComparison(instr, ">=", false, true); break;
+
+					// Switch statement in HLSL was missing. Added because AC4 uses it.
+					case OPCODE_SWITCH:
+						sprintf_s(buffer, sizeof(buffer), "  switch (%s) {\n", ci(op1).c_str());
+						appendOutput(buffer);
+						break;
+					case OPCODE_CASE:
+						sprintf_s(buffer, sizeof(buffer), "  case %s :", ci(op1).substr(2, 1).c_str());
+						appendOutput(buffer);
+						break;
+					case OPCODE_ENDSWITCH:
+						sprintf_s(buffer, sizeof(buffer), "  }\n");
+						appendOutput(buffer);
+						break;
+					case OPCODE_DEFAULT:
+						sprintf_s(buffer, sizeof(buffer), "  default :\n");
+						appendOutput(buffer);
+						break;
+
+					case OPCODE_IF:
+						applySwizzle(".x", op1);
+						if (instr->eBooleanTestType == INSTRUCTION_TEST_ZERO)
+							sprintf_s(buffer, sizeof(buffer), "  if (%s == 0) {\n", ci(op1).c_str());
+						else
+							sprintf_s(buffer, sizeof(buffer), "  if (%s != 0) {\n", ci(op1).c_str());
+						appendOutput(buffer);
+						break;
+					case OPCODE_ELSE:
+						sprintf_s(buffer, sizeof(buffer), "  } else {\n");
+						appendOutput(buffer);
+						break;
+					case OPCODE_ENDIF:
+						sprintf_s(buffer, sizeof(buffer), "  }\n");
+						appendOutput(buffer);
+						break;
+
+					case OPCODE_LOOP:
+						sprintf_s(buffer, sizeof(buffer), "  while (true) {\n");
+						appendOutput(buffer);
+						break;
+					case OPCODE_BREAK:
+						sprintf_s(buffer, sizeof(buffer), "  break;\n");
+						appendOutput(buffer);
+						break;
+					case OPCODE_BREAKC:
+						applySwizzle(".x", op1);
+						if (instr->eBooleanTestType == INSTRUCTION_TEST_ZERO)
+							sprintf_s(buffer, sizeof(buffer), "  if (%s == 0) break;\n", ci(op1).c_str());
+						else
+							sprintf_s(buffer, sizeof(buffer), "  if (%s != 0) break;\n", ci(op1).c_str());
+						appendOutput(buffer);
+						break;
+					case OPCODE_CONTINUE:
+						sprintf_s(buffer, sizeof(buffer), "  continue;\n");
+						appendOutput(buffer);
+						break;
+					case OPCODE_CONTINUEC:
+						applySwizzle(".x", op1);
+						if (instr->eBooleanTestType == INSTRUCTION_TEST_ZERO)
+							sprintf_s(buffer, sizeof(buffer), "  if (%s == 0) continue;\n", ci(op1).c_str());
+						else
+							sprintf_s(buffer, sizeof(buffer), "  if (%s != 0) continue;\n", ci(op1).c_str());
+						appendOutput(buffer);
+						break;
+					case OPCODE_ENDLOOP:
+						sprintf_s(buffer, sizeof(buffer), "  }\n");
+						appendOutput(buffer);
+						break;
+
+					// Found in Witcher3 Compute Shaders
+					case OPCODE_SYNC:
+						if (!strcmp(statement, "sync_g_t"))
+							sprintf_s(buffer, sizeof(buffer), "  GroupMemoryBarrierWithGroupSync();\n");
+						else
+							sprintf_s(buffer, sizeof(buffer), "  Unknown sync instruction;\n");
+						appendOutput(buffer);
+						break;
+
+					case OPCODE_SWAPC: {
+						remapTarget(op1);
+						remapTarget(op2);
+						removeBoolean(op1);
+						removeBoolean(op2);
 						applySwizzle(op1, op3);
-					if (!strncmp(op1, "null", 4))
-						sprintf_s(buffer, sizeof(buffer), "  %s = cos(%s);\n", writeTarget(op2), ci(op3).c_str());
-					else if (!strncmp(op2, "null", 4))
-						sprintf_s(buffer, sizeof(buffer), "  %s = sin(%s);\n", writeTarget(op1), ci(op3).c_str());
-					else
-						sprintf_s(buffer, sizeof(buffer), "  sincos(%s, %s, %s);\n", ci(op3).c_str(), writeTarget(op1), writeTarget(op2));
-					appendOutput(buffer);
-					removeBoolean(op1);
-					removeBoolean(op2);
-					break;
-
-				// Failing case of: "movc_sat r2.xyzw, r2.xxxx, r7.xyzw, r4.xyzw"
-				// Unrolling damaged r2.x at the first line and then reused it in each.
-				// Changed to single vector assignment: r2.xyzw = saturate(r2.xxxx ? r7.xyzw : r4.xyzw);
-				case OPCODE_MOVC: {
-					remapTarget(op1);
-					applySwizzle(op1, fixImm(op2, instr->asOperands[1]));
-					applySwizzle(op1, fixImm(op3, instr->asOperands[2]));
-					applySwizzle(op1, fixImm(op4, instr->asOperands[3]));
-					if (!instr->bSaturate)
-						sprintf_s(buffer, sizeof(buffer), "  %s = %s ? %s : %s;\n", writeTarget(op1), ci(op2).c_str(), ci(op3).c_str(),
-								  ci(op4).c_str());
-					else
-						sprintf_s(buffer, sizeof(buffer), "  %s = saturate(%s ? %s : %s);\n", writeTarget(op1), ci(op2).c_str(),
-								  ci(op3).c_str(), ci(op4).c_str());
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
-				}
-
-				// Big change to all these boolean test opcodes. All were unrolled and generated a code line per component.
-				// To make the boolean tests work correctly for AND, these were rolled back into one, and added to the boolean
-				// set list as a complete operand, like 'r0.xyw'.
-				case OPCODE_NE: emitComparison(instr, "!="); break;
-				case OPCODE_INE: emitComparison(instr, "!=", true, false); break;
-				case OPCODE_EQ: emitComparison(instr, "=="); break;
-				case OPCODE_IEQ: emitComparison(instr, "==", true, false); break;
-				case OPCODE_LT: emitComparison(instr, "<"); break;
-				case OPCODE_ILT: emitComparison(instr, "<", true, false); break;
-				case OPCODE_ULT: emitComparison(instr, "<", false, true); break;
-				case OPCODE_GE: emitComparison(instr, ">="); break;
-				case OPCODE_IGE: emitComparison(instr, ">=", true, false); break;
-				case OPCODE_UGE: emitComparison(instr, ">=", false, true); break;
-
-				// Switch statement in HLSL was missing. Added because AC4 uses it.
-				case OPCODE_SWITCH:
-					sprintf_s(buffer, sizeof(buffer), "  switch (%s) {\n", ci(op1).c_str());
-					appendOutput(buffer);
-					break;
-				case OPCODE_CASE:
-					sprintf_s(buffer, sizeof(buffer), "  case %s :", ci(op1).substr(2, 1).c_str());
-					appendOutput(buffer);
-					break;
-				case OPCODE_ENDSWITCH:
-					sprintf_s(buffer, sizeof(buffer), "  }\n");
-					appendOutput(buffer);
-					break;
-				case OPCODE_DEFAULT:
-					sprintf_s(buffer, sizeof(buffer), "  default :\n");
-					appendOutput(buffer);
-					break;
-
-				case OPCODE_IF:
-					applySwizzle(".x", op1);
-					if (instr->eBooleanTestType == INSTRUCTION_TEST_ZERO)
-						sprintf_s(buffer, sizeof(buffer), "  if (%s == 0) {\n", ci(op1).c_str());
-					else
-						sprintf_s(buffer, sizeof(buffer), "  if (%s != 0) {\n", ci(op1).c_str());
-					appendOutput(buffer);
-					break;
-				case OPCODE_ELSE:
-					sprintf_s(buffer, sizeof(buffer), "  } else {\n");
-					appendOutput(buffer);
-					break;
-				case OPCODE_ENDIF:
-					sprintf_s(buffer, sizeof(buffer), "  }\n");
-					appendOutput(buffer);
-					break;
-
-				case OPCODE_LOOP:
-					sprintf_s(buffer, sizeof(buffer), "  while (true) {\n");
-					appendOutput(buffer);
-					break;
-				case OPCODE_BREAK:
-					sprintf_s(buffer, sizeof(buffer), "  break;\n");
-					appendOutput(buffer);
-					break;
-				case OPCODE_BREAKC:
-					applySwizzle(".x", op1);
-					if (instr->eBooleanTestType == INSTRUCTION_TEST_ZERO)
-						sprintf_s(buffer, sizeof(buffer), "  if (%s == 0) break;\n", ci(op1).c_str());
-					else
-						sprintf_s(buffer, sizeof(buffer), "  if (%s != 0) break;\n", ci(op1).c_str());
-					appendOutput(buffer);
-					break;
-				case OPCODE_CONTINUE:
-					sprintf_s(buffer, sizeof(buffer), "  continue;\n");
-					appendOutput(buffer);
-					break;
-				case OPCODE_CONTINUEC:
-					applySwizzle(".x", op1);
-					if (instr->eBooleanTestType == INSTRUCTION_TEST_ZERO)
-						sprintf_s(buffer, sizeof(buffer), "  if (%s == 0) continue;\n", ci(op1).c_str());
-					else
-						sprintf_s(buffer, sizeof(buffer), "  if (%s != 0) continue;\n", ci(op1).c_str());
-					appendOutput(buffer);
-					break;
-				case OPCODE_ENDLOOP:
-					sprintf_s(buffer, sizeof(buffer), "  }\n");
-					appendOutput(buffer);
-					break;
-
-				// Found in Witcher3 Compute Shaders
-				case OPCODE_SYNC:
-					if (!strcmp(statement, "sync_g_t"))
-						sprintf_s(buffer, sizeof(buffer), "  GroupMemoryBarrierWithGroupSync();\n");
-					else
-						sprintf_s(buffer, sizeof(buffer), "  Unknown sync instruction;\n");
-					appendOutput(buffer);
-					break;
-
-				case OPCODE_SWAPC: {
-					remapTarget(op1);
-					remapTarget(op2);
-					removeBoolean(op1); // The code damages the op1, op2 below.
-					removeBoolean(op2);
-					applySwizzle(op1, op3);
-					applySwizzle(op1, op4);
-					applySwizzle(op1, op5);
-					int idx = 0;
-					char *pop1 = strrchr(op1, '.');
-					*pop1 = 0;
-					char *pop2 = strrchr(op2, '.');
-					if (pop2)
-						*pop2 = 0;
-					char *pop3 = strrchr(op3, '.');
-					if (pop3)
-						*pop3 = 0;
-					while (*++pop1) {
-						sprintf_s(op6, sizeof(op6), "%s.%c", op1, *pop1);
+						applySwizzle(op1, op4);
+						applySwizzle(op1, op5);
+						int idx = 0;
+						char *pop1 = strrchr(op1, '.');
+						*pop1 = 0;
+						char *pop2 = strrchr(op2, '.');
 						if (pop2)
-							sprintf_s(op7, sizeof(op7), "%s.%c", op2, *++pop2);
-						else
-							sprintf_s(op7, sizeof(op7), "%s", op2);
+							*pop2 = 0;
+						char *pop3 = strrchr(op3, '.');
 						if (pop3)
-							sprintf_s(op8, sizeof(op8), "%s.%c", op3, *++pop3);
+							*pop3 = 0;
+						while (*++pop1) {
+							sprintf_s(op6, sizeof(op6), "%s.%c", op1, *pop1);
+							if (pop2)
+								sprintf_s(op7, sizeof(op7), "%s.%c", op2, *++pop2);
+							else
+								sprintf_s(op7, sizeof(op7), "%s", op2);
+							if (pop3)
+								sprintf_s(op8, sizeof(op8), "%s.%c", op3, *++pop3);
+							else
+								sprintf_s(op8, sizeof(op8), "%s", op3);
+							sprintf_s(buffer, sizeof(buffer), "  %s = (int)%s ? %s : %s; %s = (int)%s ? %s : %s;\n", writeTarget(op6),
+									  ci(op8).c_str(), ci(GetSuffix(op5, idx)).c_str(), ci(GetSuffix(op4, idx)).c_str(), writeTarget(op7),
+									  ci(op8).c_str(), ci(GetSuffix(op4, idx)).c_str(), ci(GetSuffix(op5, idx)).c_str());
+							appendOutput(buffer);
+							++idx;
+						}
+						break;
+					}
+
+					// This generated code needed to change because the fxc compiler generates bad code when
+					// using the sample that they specify in the documentation at:
+					// http://msdn.microsoft.com/en-us/library/windows/desktop/hh446837(v=vs.85).aspx
+					// I worked out the alternate technique that works for all, and does not tickle
+					// the bug that treats 0x80000000 as "-0" as a uint, where it should not exist.
+					case OPCODE_BFI: {
+						remapTarget(op1);
+						removeBoolean(op1);
+						applySwizzle(op1, op2);
+						applySwizzle(op1, op3);
+						applySwizzle(op1, op4);
+						applySwizzle(op1, op5);
+						int idx = 0;
+						char *pop1 = strrchr(op1, '.');
+						*pop1 = 0;
+						while (*++pop1) {
+							sprintf_s(op6, sizeof(op6), "%s.%c", op1, *pop1);
+							sprintf_s(
+								buffer, sizeof(buffer),
+								"  bitmask.%c = ((~(-1 << %s)) << %s) & 0xffffffff;  %s = (((uint)%s << %s) & bitmask.%c) | ((uint)%s & "
+								"~bitmask.%c);\n",
+								*pop1, ci(GetSuffix(op2, idx)).c_str(), ci(GetSuffix(op3, idx)).c_str(), writeTarget(op6),
+								ci(GetSuffix(op4, idx)).c_str(), ci(GetSuffix(op3, idx)).c_str(), *pop1, ci(GetSuffix(op5, idx)).c_str(),
+								*pop1);
+							appendOutput(buffer);
+							++idx;
+						}
+						break;
+					}
+
+					// Was missing the sample_aoffimmi variant. Added as matching sample_b type. Used in FC4.
+					case OPCODE_SAMPLE: {
+						remapTarget(op1);
+						applySwizzle(".xyzw", op2);
+						applySwizzle(op1, op3);
+						int textureId = parseResourceIndex(op3);
+						int samplerId = parseResourceIndex(op4);
+						truncateTexturePos(op2, mTextureType[textureId].c_str());
+						if (!instr->bAddressOffset)
+							sprintf_s(buffer, sizeof(buffer), "  %s = %s.Sample(%s, %s)%s;\n", writeTarget(op1),
+									  mTextureNames[textureId].c_str(), mSamplerNames[samplerId].c_str(), ci(op2).c_str(),
+									  strrchr(op3, '.'));
+						else {
+							int offsetx = 0, offsety = 0, offsetz = 0;
+							sscanf_s(statement, "sample_aoffimmi(%d,%d,%d", &offsetx, &offsety, &offsetz);
+							sprintf_s(buffer, sizeof(buffer), "  %s = %s.Sample(%s, %s, int2(%d, %d))%s;\n", writeTarget(op1),
+									  mTextureNames[textureId].c_str(), mSamplerNames[samplerId].c_str(), ci(op2).c_str(), offsetx, offsety,
+									  strrchr(op3, '.'));
+						}
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
+					}
+
+					// Missing opcode for WatchDogs. Very similar to SAMPLE_L, so copied from there.
+					case OPCODE_SAMPLE_B: {
+						remapTarget(op1);
+						applySwizzle(".xyzw", op2);
+						applySwizzle(op1, op3);
+						applySwizzle(".x", fixImm(op5, instr->asOperands[4]));
+						int textureId = parseResourceIndex(op3);
+						int samplerId = parseResourceIndex(op4);
+						truncateTexturePos(op2, mTextureType[textureId].c_str());
+						if (!instr->bAddressOffset)
+							sprintf_s(buffer, sizeof(buffer), "  %s = %s.SampleBias(%s, %s, %s)%s;\n", writeTarget(op1),
+									  mTextureNames[textureId].c_str(), mSamplerNames[samplerId].c_str(), ci(op2).c_str(), ci(op5).c_str(),
+									  strrchr(op3, '.'));
+						else {
+							int offsetx = 0, offsety = 0, offsetz = 0;
+							sscanf_s(statement, "sample_b_aoffimmi_indexable(%d,%d,%d", &offsetx, &offsety, &offsetz);
+							sprintf_s(buffer, sizeof(buffer), "  %s = %s.SampleBias(%s, %s, %s, int2(%d, %d))%s;\n", writeTarget(op1),
+									  mTextureNames[textureId].c_str(), mSamplerNames[samplerId].c_str(), ci(op2).c_str(), ci(op5).c_str(),
+									  offsetx, offsety, strrchr(op3, '.'));
+						}
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
+					}
+					case OPCODE_SAMPLE_L: {
+						remapTarget(op1);
+						applySwizzle(".xyzw", op2);
+						applySwizzle(op1, op3);
+						applySwizzle(".x", fixImm(op5, instr->asOperands[4]));
+						int textureId = parseResourceIndex(op3);
+						int samplerId = parseResourceIndex(op4);
+						truncateTexturePos(op2, mTextureType[textureId].c_str());
+						if (!instr->bAddressOffset)
+							sprintf_s(buffer, sizeof(buffer), "  %s = %s.SampleLevel(%s, %s, %s)%s;\n", writeTarget(op1),
+									  mTextureNames[textureId].c_str(), mSamplerNames[samplerId].c_str(), ci(op2).c_str(), ci(op5).c_str(),
+									  strrchr(op3, '.'));
+						else {
+							int offsetx = 0, offsety = 0, offsetz = 0;
+							sscanf_s(statement, "sample_l_aoffimmi_indexable(%d,%d,%d", &offsetx, &offsety, &offsetz);
+							sprintf_s(buffer, sizeof(buffer), "  %s = %s.SampleLevel(%s, %s, %s, int2(%d, %d))%s;\n", writeTarget(op1),
+									  mTextureNames[textureId].c_str(), mSamplerNames[samplerId].c_str(), ci(op2).c_str(), ci(op5).c_str(),
+									  offsetx, offsety, strrchr(op3, '.'));
+						}
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
+					}
+					case OPCODE_SAMPLE_D: {
+						remapTarget(op1);
+						applySwizzle(".xyzw", op2);
+						applySwizzle(op1, op3);
+						applySwizzle(op1, fixImm(op5, instr->asOperands[4]));
+						applySwizzle(op1, fixImm(op6, instr->asOperands[5]));
+						int textureId = parseResourceIndex(op3);
+						int samplerId = parseResourceIndex(op4);
+						truncateTexturePos(op2, mTextureType[textureId].c_str());
+						if (!instr->bAddressOffset)
+							sprintf_s(buffer, sizeof(buffer), "  %s = %s.SampleGrad(%s, %s, %s, %s)%s;\n", writeTarget(op1),
+									  mTextureNames[textureId].c_str(), mSamplerNames[samplerId].c_str(), ci(op2).c_str(), ci(op5).c_str(),
+									  ci(op6).c_str(), strrchr(op3, '.'));
+						else {
+							int offsetx = 0, offsety = 0, offsetz = 0;
+							sscanf_s(statement, "sample_d_aoffimmi_indexable(%d,%d,%d", &offsetx, &offsety, &offsetz);
+							sprintf_s(buffer, sizeof(buffer), "  %s = %s.SampleGrad(%s, %s, %s, %s, int2(%d, %d))%s;\n", writeTarget(op1),
+									  mTextureNames[textureId].c_str(), mSamplerNames[samplerId].c_str(), ci(op2).c_str(), ci(op5).c_str(),
+									  ci(op6).c_str(), offsetx, offsety, strrchr(op3, '.'));
+						}
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
+					}
+					case OPCODE_SAMPLE_C: {
+						remapTarget(op1);
+						applySwizzle(".xyzw", op2);
+						applySwizzle(op1, op3);
+						applySwizzle(".x", fixImm(op5, instr->asOperands[4]));
+						int textureId = parseResourceIndex(op3);
+						int samplerId = parseResourceIndex(op4);
+						truncateTexturePos(op2, mTextureType[textureId].c_str());
+						if (!instr->bAddressOffset)
+							sprintf_s(buffer, sizeof(buffer), "  %s = %s.SampleCmp(%s, %s, %s)%s;\n", writeTarget(op1),
+									  mTextureNames[textureId].c_str(), mSamplerComparisonNames[samplerId].c_str(), ci(op2).c_str(),
+									  ci(op5).c_str(), strrchr(op3, '.'));
+						else {
+							int offsetx = 0, offsety = 0, offsetz = 0;
+							sscanf_s(statement, "sample_c_aoffimmi_indexable(%d,%d,%d", &offsetx, &offsety, &offsetz);
+							sprintf_s(buffer, sizeof(buffer), "  %s = %s.SampleCmp(%s, %s, %s, int2(%d, %d))%s;\n", writeTarget(op1),
+									  mTextureNames[textureId].c_str(), mSamplerComparisonNames[samplerId].c_str(), ci(op2).c_str(),
+									  ci(op5).c_str(), offsetx, offsety, strrchr(op3, '.'));
+						}
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
+					}
+					case OPCODE_SAMPLE_C_LZ: {
+						remapTarget(op1);
+						applySwizzle(".xyzw", op2);
+						applySwizzle(op1, op3);
+						applySwizzle(".x", fixImm(op5, instr->asOperands[4]));
+						int textureId = parseResourceIndex(op3);
+						int samplerId = parseResourceIndex(op4);
+						truncateTexturePos(op2, mTextureType[textureId].c_str());
+						if (!instr->bAddressOffset)
+							sprintf_s(buffer, sizeof(buffer), "  %s = %s.SampleCmpLevelZero(%s, %s, %s)%s;\n", writeTarget(op1),
+									  mTextureNames[textureId].c_str(), mSamplerComparisonNames[samplerId].c_str(), ci(op2).c_str(),
+									  ci(op5).c_str(), strrchr(op3, '.'));
+						else {
+							int offsetx = 0, offsety = 0, offsetz = 0;
+							sscanf_s(statement, "sample_c_lz_aoffimmi_indexable(%d,%d,%d", &offsetx, &offsety, &offsetz);
+							sprintf_s(buffer, sizeof(buffer), "  %s = %s.SampleCmpLevelZero(%s, %s, %s, int2(%d, %d))%s;\n",
+									  writeTarget(op1), mTextureNames[textureId].c_str(), mSamplerComparisonNames[samplerId].c_str(),
+									  ci(op2).c_str(), ci(op5).c_str(), offsetx, offsety, strrchr(op3, '.'));
+						}
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
+					}
+					// This opcode was missing, and used in WatchDogs.
+					// expected code "samplepos r0.xy, t1.xyxx, v1.x" -> "r0.xy = t1.GetSamplePosition(v1.x);"
+					case OPCODE_SAMPLE_POS: {
+						remapTarget(op1);
+						applySwizzle(op1, op2);
+						applySwizzle(op1, op3);
+						int textureId = parseResourceIndex(op2);
+						sprintf_s(buffer, sizeof(buffer), "  %s = %s.GetSamplePosition(%s);\n", writeTarget(op1),
+								  mTextureNames[textureId].c_str(), ci(op3).c_str());
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
+					}
+					// Missing opcode, used in FC4. Similar to 'sample'
+					// lod dest[.mask], srcAddress[.swizzle], srcResource[.swizzle], srcSampler
+					// ret Object.CalculateLevelOfDetail(sampler_state S, float x);
+					// "lod r0.x, r0.xyzx, t2.y, s2" -> "r0.x = t2.CalculateLevelOfDetailUnclamped(s2, r0.xyz);"
+					// CalculateLevelOfDetailUnclamped compiles to t2.y,
+					// CalculateLevelOfDetail compiles to t2.x
+					case OPCODE_LOD: {
+						remapTarget(op1);
+						applySwizzle(".xyzw", op2);
+						applySwizzle(op1, op3);
+						int textureId = parseResourceIndex(op3);
+						int samplerId = parseResourceIndex(op4);
+						truncateTexturePos(op2, mTextureType[textureId].c_str());
+						char *clamped = strrchr(op3, '.') + 1;
+						if (*clamped == 'x')
+							sprintf_s(buffer, sizeof(buffer), "  %s = %s.CalculateLevelOfDetail(%s, %s);\n", writeTarget(op1),
+									  mTextureNames[textureId].c_str(), mSamplerNames[samplerId].c_str(), ci(op2).c_str());
 						else
-							sprintf_s(op8, sizeof(op8), "%s", op3);
-						// FIXME: May need fixup for read from constant buffer of unidentified type
-						sprintf_s(buffer, sizeof(buffer), "  %s = (int)%s ? %s : %s; %s = (int)%s ? %s : %s;\n", writeTarget(op6),
-								  ci(op8).c_str(), ci(GetSuffix(op5, idx)).c_str(), ci(GetSuffix(op4, idx)).c_str(), writeTarget(op7),
-								  ci(op8).c_str(), ci(GetSuffix(op4, idx)).c_str(), ci(GetSuffix(op5, idx)).c_str());
+							sprintf_s(buffer, sizeof(buffer), "  %s = %s.CalculateLevelOfDetailUnclamped(%s, %s);\n", writeTarget(op1),
+									  mTextureNames[textureId].c_str(), mSamplerNames[samplerId].c_str(), ci(op2).c_str());
 						appendOutput(buffer);
-						++idx;
+						removeBoolean(op1);
+						break;
 					}
-					break;
-				}
-
-				// This generated code needed to change because the fxc compiler generates bad code when
-				// using the sample that they specify in the documentation at:
-				// http://msdn.microsoft.com/en-us/library/windows/desktop/hh446837(v=vs.85).aspx
-				// I worked out the alternate technique that works for all, and does not tickle
-				// the bug that treats 0x80000000 as "-0" as a uint, where it should not exist.
-				case OPCODE_BFI: {
-					remapTarget(op1);
-					removeBoolean(op1);
-					applySwizzle(op1, op2);
-					applySwizzle(op1, op3);
-					applySwizzle(op1, op4);
-					applySwizzle(op1, op5);
-					int idx = 0;
-					char *pop1 = strrchr(op1, '.');
-					*pop1 = 0;
-					while (*++pop1) {
-						sprintf_s(op6, sizeof(op6), "%s.%c", op1, *pop1);
-						sprintf_s(buffer, sizeof(buffer),
-								  "  bitmask.%c = ((~(-1 << %s)) << %s) & 0xffffffff;  %s = (((uint)%s << %s) & bitmask.%c) | ((uint)%s & "
-								  "~bitmask.%c);\n",
-								  *pop1, ci(GetSuffix(op2, idx)).c_str(), ci(GetSuffix(op3, idx)).c_str(), writeTarget(op6),
-								  ci(GetSuffix(op4, idx)).c_str(), ci(GetSuffix(op3, idx)).c_str(), *pop1, ci(GetSuffix(op5, idx)).c_str(),
-								  *pop1);
+					case OPCODE_GATHER4: {
+						remapTarget(op1);
+						applySwizzle(".xyzw", op2);
+						applySwizzle(op1, op3);
+						int textureId = parseResourceIndex(op3);
+						int samplerId = parseResourceIndex(op4);
+						truncateTexturePos(op2, mTextureType[textureId].c_str());
+						if (!instr->bAddressOffset)
+							sprintf_s(buffer, sizeof(buffer), "  %s = %s.Gather(%s, %s)%s;\n", writeTarget(op1),
+									  mTextureNames[textureId].c_str(), mSamplerNames[samplerId].c_str(), ci(op2).c_str(),
+									  strrchr(op3, '.'));
+						else {
+							int offsetx = 0, offsety = 0, offsetz = 0;
+							sscanf_s(statement, "gather4_aoffimmi_indexable(%d,%d,%d", &offsetx, &offsety, &offsetz);
+							sprintf_s(buffer, sizeof(buffer), "  %s = %s.Gather(%s, %s, int2(%d, %d))%s;\n", writeTarget(op1),
+									  mTextureNames[textureId].c_str(), mSamplerNames[samplerId].c_str(), ci(op2).c_str(), offsetx, offsety,
+									  strrchr(op3, '.'));
+						}
 						appendOutput(buffer);
-						++idx;
+						removeBoolean(op1);
+						break;
 					}
-					break;
-				}
-
-				// Was missing the sample_aoffimmi variant. Added as matching sample_b type. Used in FC4.
-				case OPCODE_SAMPLE: {
-					remapTarget(op1);
-					applySwizzle(".xyzw", op2);
-					applySwizzle(op1, op3);
-					int textureId = parseResourceIndex(op3);
-					int samplerId = parseResourceIndex(op4);
-					truncateTexturePos(op2, mTextureType[textureId].c_str());
-					if (!instr->bAddressOffset)
-						sprintf_s(buffer, sizeof(buffer), "  %s = %s.Sample(%s, %s)%s;\n", writeTarget(op1),
-								  mTextureNames[textureId].c_str(), mSamplerNames[samplerId].c_str(), ci(op2).c_str(), strrchr(op3, '.'));
-					else {
-						int offsetx = 0, offsety = 0, offsetz = 0;
-						sscanf_s(statement, "sample_aoffimmi(%d,%d,%d", &offsetx, &offsety, &offsetz);
-						sprintf_s(buffer, sizeof(buffer), "  %s = %s.Sample(%s, %s, int2(%d, %d))%s;\n", writeTarget(op1),
-								  mTextureNames[textureId].c_str(), mSamplerNames[samplerId].c_str(), ci(op2).c_str(), offsetx, offsety,
-								  strrchr(op3, '.'));
-					}
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
-				}
-
-				// Missing opcode for WatchDogs. Very similar to SAMPLE_L, so copied from there.
-				case OPCODE_SAMPLE_B: {
-					remapTarget(op1);
-					applySwizzle(".xyzw", op2);
-					applySwizzle(op1, op3);
-					applySwizzle(".x", fixImm(op5, instr->asOperands[4]));
-					int textureId = parseResourceIndex(op3);
-					int samplerId = parseResourceIndex(op4);
-					truncateTexturePos(op2, mTextureType[textureId].c_str());
-					if (!instr->bAddressOffset)
-						sprintf_s(buffer, sizeof(buffer), "  %s = %s.SampleBias(%s, %s, %s)%s;\n", writeTarget(op1),
-								  mTextureNames[textureId].c_str(), mSamplerNames[samplerId].c_str(), ci(op2).c_str(), ci(op5).c_str(),
-								  strrchr(op3, '.'));
-					else {
-						int offsetx = 0, offsety = 0, offsetz = 0;
-						sscanf_s(statement, "sample_b_aoffimmi_indexable(%d,%d,%d", &offsetx, &offsety, &offsetz);
-						sprintf_s(buffer, sizeof(buffer), "  %s = %s.SampleBias(%s, %s, %s, int2(%d, %d))%s;\n", writeTarget(op1),
-								  mTextureNames[textureId].c_str(), mSamplerNames[samplerId].c_str(), ci(op2).c_str(), ci(op5).c_str(),
-								  offsetx, offsety, strrchr(op3, '.'));
-					}
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
-				}
-				case OPCODE_SAMPLE_L: {
-					remapTarget(op1);
-					applySwizzle(".xyzw", op2);
-					applySwizzle(op1, op3);
-					applySwizzle(".x", fixImm(op5, instr->asOperands[4]));
-					int textureId = parseResourceIndex(op3);
-					int samplerId = parseResourceIndex(op4);
-					truncateTexturePos(op2, mTextureType[textureId].c_str());
-					if (!instr->bAddressOffset)
-						sprintf_s(buffer, sizeof(buffer), "  %s = %s.SampleLevel(%s, %s, %s)%s;\n", writeTarget(op1),
-								  mTextureNames[textureId].c_str(), mSamplerNames[samplerId].c_str(), ci(op2).c_str(), ci(op5).c_str(),
-								  strrchr(op3, '.'));
-					else {
-						int offsetx = 0, offsety = 0, offsetz = 0;
-						sscanf_s(statement, "sample_l_aoffimmi_indexable(%d,%d,%d", &offsetx, &offsety, &offsetz);
-						sprintf_s(buffer, sizeof(buffer), "  %s = %s.SampleLevel(%s, %s, %s, int2(%d, %d))%s;\n", writeTarget(op1),
-								  mTextureNames[textureId].c_str(), mSamplerNames[samplerId].c_str(), ci(op2).c_str(), ci(op5).c_str(),
-								  offsetx, offsety, strrchr(op3, '.'));
-					}
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
-				}
-				case OPCODE_SAMPLE_D: {
-					remapTarget(op1);
-					applySwizzle(".xyzw", op2);
-					applySwizzle(op1, op3);
-					applySwizzle(op1, fixImm(op5, instr->asOperands[4]));
-					applySwizzle(op1, fixImm(op6, instr->asOperands[5]));
-					int textureId = parseResourceIndex(op3);
-					int samplerId = parseResourceIndex(op4);
-					truncateTexturePos(op2, mTextureType[textureId].c_str());
-					if (!instr->bAddressOffset)
-						sprintf_s(buffer, sizeof(buffer), "  %s = %s.SampleGrad(%s, %s, %s, %s)%s;\n", writeTarget(op1),
-								  mTextureNames[textureId].c_str(), mSamplerNames[samplerId].c_str(), ci(op2).c_str(), ci(op5).c_str(),
-								  ci(op6).c_str(), strrchr(op3, '.'));
-					else {
-						int offsetx = 0, offsety = 0, offsetz = 0;
-						sscanf_s(statement, "sample_d_aoffimmi_indexable(%d,%d,%d", &offsetx, &offsety, &offsetz);
-						sprintf_s(buffer, sizeof(buffer), "  %s = %s.SampleGrad(%s, %s, %s, %s, int2(%d, %d))%s;\n", writeTarget(op1),
-								  mTextureNames[textureId].c_str(), mSamplerNames[samplerId].c_str(), ci(op2).c_str(), ci(op5).c_str(),
-								  ci(op6).c_str(), offsetx, offsety, strrchr(op3, '.'));
-					}
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
-				}
-				case OPCODE_SAMPLE_C: {
-					remapTarget(op1);
-					applySwizzle(".xyzw", op2);
-					applySwizzle(op1, op3);
-					applySwizzle(".x", fixImm(op5, instr->asOperands[4]));
-					int textureId = parseResourceIndex(op3);
-					int samplerId = parseResourceIndex(op4);
-					truncateTexturePos(op2, mTextureType[textureId].c_str());
-					if (!instr->bAddressOffset)
-						sprintf_s(buffer, sizeof(buffer), "  %s = %s.SampleCmp(%s, %s, %s)%s;\n", writeTarget(op1),
-								  mTextureNames[textureId].c_str(), mSamplerComparisonNames[samplerId].c_str(), ci(op2).c_str(),
-								  ci(op5).c_str(), strrchr(op3, '.'));
-					else {
-						int offsetx = 0, offsety = 0, offsetz = 0;
-						sscanf_s(statement, "sample_c_aoffimmi_indexable(%d,%d,%d", &offsetx, &offsety, &offsetz);
-						sprintf_s(buffer, sizeof(buffer), "  %s = %s.SampleCmp(%s, %s, %s, int2(%d, %d))%s;\n", writeTarget(op1),
-								  mTextureNames[textureId].c_str(), mSamplerComparisonNames[samplerId].c_str(), ci(op2).c_str(),
-								  ci(op5).c_str(), offsetx, offsety, strrchr(op3, '.'));
-					}
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
-				}
-				case OPCODE_SAMPLE_C_LZ: {
-					remapTarget(op1);
-					applySwizzle(".xyzw", op2);
-					applySwizzle(op1, op3);
-					applySwizzle(".x", fixImm(op5, instr->asOperands[4]));
-					int textureId = parseResourceIndex(op3);
-					int samplerId = parseResourceIndex(op4);
-					truncateTexturePos(op2, mTextureType[textureId].c_str());
-					if (!instr->bAddressOffset)
-						sprintf_s(buffer, sizeof(buffer), "  %s = %s.SampleCmpLevelZero(%s, %s, %s)%s;\n", writeTarget(op1),
-								  mTextureNames[textureId].c_str(), mSamplerComparisonNames[samplerId].c_str(), ci(op2).c_str(),
-								  ci(op5).c_str(), strrchr(op3, '.'));
-					else {
-						int offsetx = 0, offsety = 0, offsetz = 0;
-						sscanf_s(statement, "sample_c_lz_aoffimmi_indexable(%d,%d,%d", &offsetx, &offsety, &offsetz);
-						sprintf_s(buffer, sizeof(buffer), "  %s = %s.SampleCmpLevelZero(%s, %s, %s, int2(%d, %d))%s;\n", writeTarget(op1),
-								  mTextureNames[textureId].c_str(), mSamplerComparisonNames[samplerId].c_str(), ci(op2).c_str(),
-								  ci(op5).c_str(), offsetx, offsety, strrchr(op3, '.'));
-					}
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
-				}
-				// This opcode was missing, and used in WatchDogs.
-				// expected code "samplepos r0.xy, t1.xyxx, v1.x" -> "r0.xy = t1.GetSamplePosition(v1.x);"
-				case OPCODE_SAMPLE_POS: {
-					remapTarget(op1);
-					applySwizzle(op1, op2);
-					applySwizzle(op1, op3);
-					int textureId = parseResourceIndex(op2);
-					sprintf_s(buffer, sizeof(buffer), "  %s = %s.GetSamplePosition(%s);\n", writeTarget(op1),
-							  mTextureNames[textureId].c_str(), ci(op3).c_str());
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
-				}
-				// Missing opcode, used in FC4. Similar to 'sample'
-				// lod dest[.mask], srcAddress[.swizzle], srcResource[.swizzle], srcSampler
-				// ret Object.CalculateLevelOfDetail(sampler_state S, float x);
-				// "lod r0.x, r0.xyzx, t2.y, s2" -> "r0.x = t2.CalculateLevelOfDetailUnclamped(s2, r0.xyz);"
-				// CalculateLevelOfDetailUnclamped compiles to t2.y,
-				// CalculateLevelOfDetail compiles to t2.x
-				case OPCODE_LOD: {
-					remapTarget(op1);
-					applySwizzle(".xyzw", op2);
-					applySwizzle(op1, op3);
-					int textureId = parseResourceIndex(op3);
-					int samplerId = parseResourceIndex(op4);
-					truncateTexturePos(op2, mTextureType[textureId].c_str());
-					char *clamped = strrchr(op3, '.') + 1;
-					if (*clamped == 'x')
-						sprintf_s(buffer, sizeof(buffer), "  %s = %s.CalculateLevelOfDetail(%s, %s);\n", writeTarget(op1),
-								  mTextureNames[textureId].c_str(), mSamplerNames[samplerId].c_str(), ci(op2).c_str());
-					else
-						sprintf_s(buffer, sizeof(buffer), "  %s = %s.CalculateLevelOfDetailUnclamped(%s, %s);\n", writeTarget(op1),
-								  mTextureNames[textureId].c_str(), mSamplerNames[samplerId].c_str(), ci(op2).c_str());
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
-				}
-				case OPCODE_GATHER4: {
-					remapTarget(op1);
-					applySwizzle(".xyzw", op2);
-					applySwizzle(op1, op3);
-					int textureId = parseResourceIndex(op3);
-					int samplerId = parseResourceIndex(op4);
-					truncateTexturePos(op2, mTextureType[textureId].c_str());
-					if (!instr->bAddressOffset)
-						sprintf_s(buffer, sizeof(buffer), "  %s = %s.Gather(%s, %s)%s;\n", writeTarget(op1),
-								  mTextureNames[textureId].c_str(), mSamplerNames[samplerId].c_str(), ci(op2).c_str(), strrchr(op3, '.'));
-					else {
-						int offsetx = 0, offsety = 0, offsetz = 0;
-						sscanf_s(statement, "gather4_aoffimmi_indexable(%d,%d,%d", &offsetx, &offsety, &offsetz);
-						sprintf_s(buffer, sizeof(buffer), "  %s = %s.Gather(%s, %s, int2(%d, %d))%s;\n", writeTarget(op1),
-								  mTextureNames[textureId].c_str(), mSamplerNames[samplerId].c_str(), ci(op2).c_str(), offsetx, offsety,
-								  strrchr(op3, '.'));
-					}
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
-				}
-				case OPCODE_GATHER4_C: {
-					remapTarget(op1);
-					applySwizzle(".xyzw", op2);
-					applySwizzle(op1, op3);
-					int textureId = parseResourceIndex(op3);
-					int samplerId = parseResourceIndex(op4);
-					truncateTexturePos(op2, mTextureType[textureId].c_str());
-					if (!instr->bAddressOffset)
-						sprintf_s(buffer, sizeof(buffer), "  %s = %s.GatherCmp(%s, %s, %s)%s;\n", writeTarget(op1),
-								  mTextureNames[textureId].c_str(), mSamplerComparisonNames[samplerId].c_str(), ci(op2).c_str(),
-								  ci(op5).c_str(), strrchr(op3, '.'));
-					else {
-						int offsetx = 0, offsety = 0, offsetz = 0;
-						sscanf_s(statement, "gather4_c_aoffimmi_indexable(%d,%d,%d", &offsetx, &offsety, &offsetz);
-						sprintf_s(buffer, sizeof(buffer), "  %s = %s.GatherCmp(%s, %s, %s, int2(%d,%d))%s;\n", writeTarget(op1),
-								  mTextureNames[textureId].c_str(), mSamplerComparisonNames[samplerId].c_str(), ci(op2).c_str(),
-								  ci(op5).c_str(), offsetx, offsety, strrchr(op3, '.'));
-					}
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
-				}
-				// Add the Gather4_PO opcodes for Dragon Age. Copied from Gather4.
-				//   gather4_po dest[.mask], srcAddress[.swizzle], srcOffset[.swizzle], srcResource[.swizzle], srcSampler[.select_component]
-				//   output.color = texture2d.Gather(samplerState, input.texcoord, int2(0,0));
-				case OPCODE_GATHER4_PO: {
-					remapTarget(op1);
-					applySwizzle(op1, op2);
-					applySwizzle(op1, op3);
-					applySwizzle(op1, op4);
-					int textureId = parseResourceIndex(op4);
-					int samplerId = parseResourceIndex(op5);
-					truncateTexturePos(op2, mTextureType[textureId].c_str());
-					sprintf_s(buffer, sizeof(buffer), "  %s = %s.Gather(%s, %s, %s)%s;\n", writeTarget(op1),
-							  mTextureNames[textureId].c_str(), mSamplerNames[samplerId].c_str(), ci(op2).c_str(), ci(op3).c_str(),
-							  strrchr(op4, '.'));
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
-				}
-				// gather4_po_c dest[.mask], srcAddress[.swizzle], srcOffset[.swizzle], srcResource[.swizzle], srcSampler[.R],
-				// srcReferenceValue
-				case OPCODE_GATHER4_PO_C: {
-					remapTarget(op1);
-					applySwizzle(op1, op2);
-					applySwizzle(op1, op3);
-					applySwizzle(op1, op4);
-					int textureId = parseResourceIndex(op4);
-					int samplerId = parseResourceIndex(op5);
-					truncateTexturePos(op2, mTextureType[textureId].c_str());
-					sprintf_s(buffer, sizeof(buffer), "  %s = %s.GatherCmp(%s, %s, %s, %s)%s;\n", writeTarget(op1),
-							  mTextureNames[textureId].c_str(), mSamplerComparisonNames[samplerId].c_str(), ci(op2).c_str(),
-							  ci(op6).c_str(), ci(op3).c_str(), strrchr(op4, '.'));
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
-				}
-				// For the _aoffimmi format, this was picking up 0..15, instead of the necessary -8..7
-				// It's a 4 bit number being used in an int, hence missing negatives.
-				// Fixed both _LD and LD_MS
-				case OPCODE_LD: {
-					remapTarget(op1);
-					applySwizzle(".xyzw", op2);
-					applySwizzle(op1, op3);
-					int textureId = parseResourceIndex(op3);
-					truncateTextureLoadPos(op2, mTextureType[textureId].c_str());
-					if (!instr->bAddressOffset)
-						sprintf_s(buffer, sizeof(buffer), "  %s = %s.Load(%s)%s;\n", writeTarget(op1), mTextureNames[textureId].c_str(),
-								  ci(op2).c_str(), strrchr(op3, '.'));
-					else {
-						int offsetU = 0, offsetV = 0, offsetW = 0;
-						sscanf_s(statement, "ld_aoffimmi(%d,%d,%d", &offsetU, &offsetV, &offsetW);
-						sprintf_s(buffer, sizeof(buffer), "  %s = %s.Load(%s, int3(%d, %d, %d))%s;\n", writeTarget(op1),
-								  mTextureNames[textureId].c_str(), ci(op2).c_str(), offsetU, offsetV, offsetW, strrchr(op3, '.'));
-					}
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
-				}
-				case OPCODE_LD_MS: {
-					remapTarget(op1);
-					applySwizzle(".xyzw", op2);
-					applySwizzle(op1, op3);
-					applySwizzle(".x", fixImm(op4, instr->asOperands[3]), true);
-					int textureId = parseResourceIndex(op3);
-					truncateTextureLoadPos(op2, mTextureType[textureId].c_str());
-					if (!instr->bAddressOffset)
-						sprintf_s(buffer, sizeof(buffer), "  %s = %s.Load(%s, %s)%s;\n", writeTarget(op1), mTextureNames[textureId].c_str(),
-								  ci(op2).c_str(), ci(op4).c_str(), strrchr(op3, '.'));
-					else {
-						int offsetU = 0, offsetV = 0, offsetW = 0;
-						sscanf_s(statement, "ld_aoffimmi(%d,%d,%d", &offsetU, &offsetV, &offsetW);
-						sprintf_s(buffer, sizeof(buffer), "  %s = %s.Load(%s, %s, int3(%d, %d, %d))%s;\n", writeTarget(op1),
-								  mTextureNames[textureId].c_str(), ci(op2).c_str(), ci(op4).c_str(), offsetU, offsetV, offsetW,
-								  strrchr(op3, '.'));
-					}
-					appendOutput(buffer);
-					removeBoolean(op1);
-					break;
-				}
-
-				// Example from Mordor, with bizarre struct offsets:
-				// struct BufferSrc
-				// {
-				//	float3 vposition; // offset: 0
-				//	float3 vvelocity; // offset: 12
-				//	float ftime; // offset: 24
-				//	float fuserdata; // offset: 28
-				// }; // offset: 0 size: 32
-				//
-				// StructuredBuffer<BufferSrc> BufferSrc_SB : register(t0);
-				//
-				// Working fxc code (unrolled is necessary):
-				// ld_structured_indexable(structured_buffer, stride=32)(mixed,mixed,mixed,mixed) r3.xyzw, v0.x, l(16), t0.xyzw
-				// r3.x = BufferSrc_SB[v0.x].vvelocity.y;
-				// r3.y = BufferSrc_SB[v0.x].vvelocity.z;
-				// r3.z = BufferSrc_SB[v0.x].ftime.x;
-				// r3.w = BufferSrc_SB[v0.x].fuserdata.x;
-				case OPCODE_LD_STRUCTURED: {
-					string dst0, srcAddress, srcByteOffset, src0;
-					string swiz;
-					ResourceBinding *bindings = shader->sInfo->psResourceBindings;
-					if (bindings == NULL) {
-						sprintf_s(buffer, sizeof(buffer), "// Missing reflection info for shader. No names possible.\n");
+					case OPCODE_GATHER4_C: {
+						remapTarget(op1);
+						applySwizzle(".xyzw", op2);
+						applySwizzle(op1, op3);
+						int textureId = parseResourceIndex(op3);
+						int samplerId = parseResourceIndex(op4);
+						truncateTexturePos(op2, mTextureType[textureId].c_str());
+						if (!instr->bAddressOffset)
+							sprintf_s(buffer, sizeof(buffer), "  %s = %s.GatherCmp(%s, %s, %s)%s;\n", writeTarget(op1),
+									  mTextureNames[textureId].c_str(), mSamplerComparisonNames[samplerId].c_str(), ci(op2).c_str(),
+									  ci(op5).c_str(), strrchr(op3, '.'));
+						else {
+							int offsetx = 0, offsety = 0, offsetz = 0;
+							sscanf_s(statement, "gather4_c_aoffimmi_indexable(%d,%d,%d", &offsetx, &offsety, &offsetz);
+							sprintf_s(buffer, sizeof(buffer), "  %s = %s.GatherCmp(%s, %s, %s, int2(%d,%d))%s;\n", writeTarget(op1),
+									  mTextureNames[textureId].c_str(), mSamplerComparisonNames[samplerId].c_str(), ci(op2).c_str(),
+									  ci(op5).c_str(), offsetx, offsety, strrchr(op3, '.'));
+						}
 						appendOutput(buffer);
-						src0 = "no_StructuredBufferName";
-						srcAddress = "no_srcAddressRegister";
-						srcByteOffset = "no_srcByteOffsetName";
-					} else {
-						src0 = bindings->Name;
-						srcAddress = instr->asOperands[1].specialName;
-						srcByteOffset = instr->asOperands[2].specialName;
+						removeBoolean(op1);
+						break;
 					}
-					dst0 = "r" + std::to_string(instr->asOperands[0].ui32RegisterNumber);
-					sprintf_s(buffer, sizeof(buffer), "// Known bad code for instruction (needs manual fix):\n");
-					appendOutput(buffer);
-					ASMLineOut(c, pos, size);
-
-					for (int component = 0; component < 4; component++) {
-						if (instr->asOperands[0].ui32CompMask & (1 << component)) {
-							switch (component) {
-							case 3: swiz = "w"; break;
-							case 2: swiz = "z"; break;
-							case 1: swiz = "y"; break;
-							case 0:
-							default: swiz = "x"; break;
-							}
-							sprintf_s(buffer, sizeof(buffer), "%s.%s = %s[%s].%s.swiz;\n", dst0.c_str(), swiz.c_str(), src0.c_str(),
-									  srcAddress.c_str(), srcByteOffset.c_str());
-							appendOutput(buffer);
-						}
+					// Add the Gather4_PO opcodes for Dragon Age. Copied from Gather4.
+					//   gather4_po dest[.mask], srcAddress[.swizzle], srcOffset[.swizzle], srcResource[.swizzle],
+					//   srcSampler[.select_component] output.color = texture2d.Gather(samplerState, input.texcoord, int2(0,0));
+					case OPCODE_GATHER4_PO: {
+						remapTarget(op1);
+						applySwizzle(op1, op2);
+						applySwizzle(op1, op3);
+						applySwizzle(op1, op4);
+						int textureId = parseResourceIndex(op4);
+						int samplerId = parseResourceIndex(op5);
+						truncateTexturePos(op2, mTextureType[textureId].c_str());
+						sprintf_s(buffer, sizeof(buffer), "  %s = %s.Gather(%s, %s, %s)%s;\n", writeTarget(op1),
+								  mTextureNames[textureId].c_str(), mSamplerNames[samplerId].c_str(), ci(op2).c_str(), ci(op3).c_str(),
+								  strrchr(op4, '.'));
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
 					}
-					removeBoolean(op1);
-					break;
-				}
-
-				case OPCODE_STORE_STRUCTURED: {
-					remapTarget(op1);
-					applySwizzle(".xyzw", op2);
-					applySwizzle(op1, op3);
-					int textureId = parseResourceIndex(op4);
-					sprintf_s(buffer, sizeof(buffer), "  %s[%s].%s = %s;\n", mTextureNames[textureId].c_str(), ci(op2).c_str(),
-							  ci(op3).c_str(), writeTarget(op1));
-					appendOutput(buffer);
-					break;
-				}
-
-				// Missing opcodes for SM5. Not implemented yet, but we want to generate some sort of code, in case
-				// these are used in needed shaders. That way we can hand edit the shader to make it usable, until this is completed.
-				case OPCODE_STORE_UAV_TYPED:
-				case OPCODE_LD_UAV_TYPED:
-				case OPCODE_LD_RAW:
-				case OPCODE_STORE_RAW: {
-					sprintf_s(buffer, sizeof(buffer), "// No code for instruction (needs manual fix):\n");
-					appendOutput(buffer);
-					ASMLineOut(c, pos, size);
-					break;
-				}
-
-				case OPCODE_DISCARD:
-					applySwizzle(".x", op1);
-					if (instr->eBooleanTestType == INSTRUCTION_TEST_ZERO)
-						sprintf_s(buffer, sizeof(buffer), "  if (%s == 0) discard;\n", ci(op1).c_str());
-					else
-						sprintf_s(buffer, sizeof(buffer), "  if (%s != 0) discard;\n", ci(op1).c_str());
-					appendOutput(buffer);
-					break;
-
-				// The GetDimensions can also see a 4 parameter version in the immediate case.
-				// https://msdn.microsoft.com/en-us/library/windows/desktop/hh447214(v=vs.85).aspx
-				//
-				// resinfo[_uint|_rcpFloat] dest[.mask], srcMipLevel.select_component, srcResource[.swizzle]
-				// In different variants based on input texture, becomes:
-				// void Object.GetDimensions(UINT MipLevel, typeX Width, typeX Height, typeX Elements, typeX Depth, typeX NumberOfLevels,
-				// typeX NumberOfSamples);
-				//
-				// We only see the immediate version l(0) in use, like:
-				//  resinfo_indexable(texture2d)(uint, uint, uint, uint)_uint r2.zw, l(0), t5.zwxy
-				//   Becomes 2 param version:   SectorAtlasTexture_UINT_TextureObject.GetDimensions(r2.z, r2.w);
-				//  resinfo_indexable(texture2dms)(float, float, float, float)_uint r0.xy, l(0), t0.xyzw
-				//   Becomes 3 param version:   DepthVPSampler_TextureObject.GetDimensions(r0.x, r0.y, bitmask.x);
-				//  resinfo_indexable(texture2darray)(float, float, float, float) r0.xy, l(0), t0.xyzw
-				//
-				// So, we'll only handle that immediate for now, and generate syntax errors if we see any other variant.
-				// We don't want to knowingly generate code that compiles, but has errors. Includes _rcpFloat as unknown.
-				case OPCODE_RESINFO: {
-					remapTarget(op1);
-					bool unknownVariant = true;
-					Operand output = instr->asOperands[0];
-					Operand constZero = instr->asOperands[1];
-					Operand texture = instr->asOperands[2];
-					RESINFO_RETURN_TYPE returnType = instr->eResInfoReturnType;
-					int texReg = texture.ui32RegisterNumber;
-					ResourceBinding bindInfo;
-					ResourceBinding *bindInfoPtr = &bindInfo;
-
-					memset(&bindInfo, 0, sizeof(bindInfo));
-					int bindstate = GetResourceFromBindingPoint(RTYPE_TEXTURE, texReg, shader->sInfo, &bindInfoPtr);
-					bool bindStripped = (bindstate == 0);
-
-					if (bindStripped) {
-						// In the case where the reflection information has been stripped from the headers,
-						// we are left with only the text line itself. Try to parse the text for variants
-						// we know, and add them to the bindInfo.
-						// e.g. from Batman and Witcher3:
-						//  resinfo_indexable(texture2d)(float,float,float,float)_uint r1.yw, l(0), t3.zxwy
-						char texType[opcodeSize];
-						char retType[opcodeSize];
-						int numInfo = sscanf_s(statement, "resinfo_indexable(%[^)])%s", texType, opcodeSize, retType, opcodeSize);
-						bool isConstant = (!strcmp(op2, "l(0),"));
-
-						if ((numInfo == 2) && isConstant) {
-							constZero.eType = OPERAND_TYPE_IMMEDIATE32;
-							constZero.afImmediates[0] = 0.0;
-							if (!strcmp(texType, "texture2d"))
-								bindInfoPtr->eDimension = REFLECT_RESOURCE_DIMENSION_TEXTURE2D;
-							else if (!strcmp(texType, "texture2dms"))
-								bindInfoPtr->eDimension = REFLECT_RESOURCE_DIMENSION_TEXTURE2DMS;
-							else if (!strcmp(texType, "texture2darray"))
-								bindInfoPtr->eDimension = REFLECT_RESOURCE_DIMENSION_TEXTURE2DARRAY;
-
-							bindInfoPtr->Name = string(op3, strrchr(op3, '.'));
-							if (strstr(retType, "_uint"))
-								returnType = RESINFO_INSTRUCTION_RETURN_UINT;
-							else
-								returnType = RESINFO_INSTRUCTION_RETURN_FLOAT;
-							texture.eType = OPERAND_TYPE_RESOURCE;
-							bindStripped = false;
+					// gather4_po_c dest[.mask], srcAddress[.swizzle], srcOffset[.swizzle], srcResource[.swizzle], srcSampler[.R],
+					// srcReferenceValue
+					case OPCODE_GATHER4_PO_C: {
+						remapTarget(op1);
+						applySwizzle(op1, op2);
+						applySwizzle(op1, op3);
+						applySwizzle(op1, op4);
+						int textureId = parseResourceIndex(op4);
+						int samplerId = parseResourceIndex(op5);
+						truncateTexturePos(op2, mTextureType[textureId].c_str());
+						sprintf_s(buffer, sizeof(buffer), "  %s = %s.GatherCmp(%s, %s, %s, %s)%s;\n", writeTarget(op1),
+								  mTextureNames[textureId].c_str(), mSamplerComparisonNames[samplerId].c_str(), ci(op2).c_str(),
+								  ci(op6).c_str(), ci(op3).c_str(), strrchr(op4, '.'));
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
+					}
+					// For the _aoffimmi format, this was picking up 0..15, instead of the necessary -8..7
+					// It's a 4 bit number being used in an int, hence missing negatives.
+					// Fixed both _LD and LD_MS
+					case OPCODE_LD: {
+						remapTarget(op1);
+						applySwizzle(".xyzw", op2);
+						applySwizzle(op1, op3);
+						int textureId = parseResourceIndex(op3);
+						truncateTextureLoadPos(op2, mTextureType[textureId].c_str());
+						if (!instr->bAddressOffset)
+							sprintf_s(buffer, sizeof(buffer), "  %s = %s.Load(%s)%s;\n", writeTarget(op1), mTextureNames[textureId].c_str(),
+									  ci(op2).c_str(), strrchr(op3, '.'));
+						else {
+							int offsetU = 0, offsetV = 0, offsetW = 0;
+							sscanf_s(statement, "ld_aoffimmi(%d,%d,%d", &offsetU, &offsetV, &offsetW);
+							sprintf_s(buffer, sizeof(buffer), "  %s = %s.Load(%s, int3(%d, %d, %d))%s;\n", writeTarget(op1),
+									  mTextureNames[textureId].c_str(), ci(op2).c_str(), offsetU, offsetV, offsetW, strrchr(op3, '.'));
 						}
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
+					}
+					case OPCODE_LD_MS: {
+						remapTarget(op1);
+						applySwizzle(".xyzw", op2);
+						applySwizzle(op1, op3);
+						applySwizzle(".x", fixImm(op4, instr->asOperands[3]), true);
+						int textureId = parseResourceIndex(op3);
+						truncateTextureLoadPos(op2, mTextureType[textureId].c_str());
+						if (!instr->bAddressOffset)
+							sprintf_s(buffer, sizeof(buffer), "  %s = %s.Load(%s, %s)%s;\n", writeTarget(op1),
+									  mTextureNames[textureId].c_str(), ci(op2).c_str(), ci(op4).c_str(), strrchr(op3, '.'));
+						else {
+							int offsetU = 0, offsetV = 0, offsetW = 0;
+							sscanf_s(statement, "ld_aoffimmi(%d,%d,%d", &offsetU, &offsetV, &offsetW);
+							sprintf_s(buffer, sizeof(buffer), "  %s = %s.Load(%s, %s, int3(%d, %d, %d))%s;\n", writeTarget(op1),
+									  mTextureNames[textureId].c_str(), ci(op2).c_str(), ci(op4).c_str(), offsetU, offsetV, offsetW,
+									  strrchr(op3, '.'));
+						}
+						appendOutput(buffer);
+						removeBoolean(op1);
+						break;
 					}
 
-					// We only presently handle the float and _uint return types, and the const 0 mode.
-					// And the texture2d and textures2dms types. That's all we've seen so far.
-					if ((constZero.eType == OPERAND_TYPE_IMMEDIATE32) && (constZero.afImmediates[0] == 0.0) &&
-						(returnType == RESINFO_INSTRUCTION_RETURN_UINT || returnType == RESINFO_INSTRUCTION_RETURN_FLOAT) &&
-						texture.eType == OPERAND_TYPE_RESOURCE && !bindStripped) {
-
-						if (bindInfoPtr->eDimension == REFLECT_RESOURCE_DIMENSION_TEXTURE2D) {
-							if (returnType == RESINFO_INSTRUCTION_RETURN_UINT)
-								sprintf_s(buffer, sizeof(buffer), "  %s.GetDimensions(0, uiDest.x, uiDest.y, uiDest.z);\n",
-										  bindInfoPtr->Name.c_str());
-							else
-								sprintf_s(buffer, sizeof(buffer), "  %s.GetDimensions(0, fDest.x, fDest.y, fDest.z);\n",
-										  bindInfoPtr->Name.c_str());
+					// Example from Mordor, with bizarre struct offsets:
+					// struct BufferSrc
+					// {
+					//	float3 vposition; // offset: 0
+					//	float3 vvelocity; // offset: 12
+					//	float ftime; // offset: 24
+					//	float fuserdata; // offset: 28
+					// }; // offset: 0 size: 32
+					//
+					// StructuredBuffer<BufferSrc> BufferSrc_SB : register(t0);
+					//
+					// Working fxc code (unrolled is necessary):
+					// ld_structured_indexable(structured_buffer, stride=32)(mixed,mixed,mixed,mixed) r3.xyzw, v0.x, l(16), t0.xyzw
+					// r3.x = BufferSrc_SB[v0.x].vvelocity.y;
+					// r3.y = BufferSrc_SB[v0.x].vvelocity.z;
+					// r3.z = BufferSrc_SB[v0.x].ftime.x;
+					// r3.w = BufferSrc_SB[v0.x].fuserdata.x;
+					case OPCODE_LD_STRUCTURED: {
+						string dst0, srcAddress, srcByteOffset, src0;
+						string swiz;
+						ResourceBinding *bindings = shader->sInfo->psResourceBindings;
+						if (bindings == NULL) {
+							sprintf_s(buffer, sizeof(buffer), "// Missing reflection info for shader. No names possible.\n");
 							appendOutput(buffer);
-							unknownVariant = false;
-						} else if (bindInfoPtr->eDimension == REFLECT_RESOURCE_DIMENSION_TEXTURE2DMS) {
-							if (returnType == RESINFO_INSTRUCTION_RETURN_UINT)
-								sprintf_s(buffer, sizeof(buffer), "  %s.GetDimensions(uiDest.x, uiDest.y, uiDest.z);\n",
-										  bindInfoPtr->Name.c_str());
-							else
-								sprintf_s(buffer, sizeof(buffer), "  %s.GetDimensions(fDest.x, fDest.y, fDest.z);\n",
-										  bindInfoPtr->Name.c_str());
-							appendOutput(buffer);
-							unknownVariant = false;
-						} else if (bindInfoPtr->eDimension == REFLECT_RESOURCE_DIMENSION_TEXTURE2DARRAY) {
-							if (returnType == RESINFO_INSTRUCTION_RETURN_UINT)
-								sprintf_s(buffer, sizeof(buffer), "  %s.GetDimensions(0, uiDest.x, uiDest.y, uiDest.z, uiDest.w);\n",
-										  bindInfoPtr->Name.c_str());
-							else
-								sprintf_s(buffer, sizeof(buffer), "  %s.GetDimensions(0, fDest.x, fDest.y, fDest.z, fDest.w);\n",
-										  bindInfoPtr->Name.c_str());
-							appendOutput(buffer);
-							unknownVariant = false;
-						}
-
-						// For the output, we saw a r3.xyzw which makes no sense for this instruction.
-						// Not sure this is fully correct, but the goal here is to apply the swizzle from the op3, which is the texture
-						// register, as the pieces that are valid to copy to the op1 output.
-						// The op3 texture swizzle can determine which components to use, and what order.
-						// The op1 output determines which ones are valid for output.
-						if (returnType == RESINFO_INSTRUCTION_RETURN_UINT) {
-							char dest[opcodeSize] = "uiDest.xyzw";
-							applySwizzle(op3, dest);
-							applySwizzle(op1, dest);
-							sprintf_s(buffer, sizeof(buffer), "  %s = %s;\n", op1, dest);
-							appendOutput(buffer);
+							src0 = "no_StructuredBufferName";
+							srcAddress = "no_srcAddressRegister";
+							srcByteOffset = "no_srcByteOffsetName";
 						} else {
-							char dest[opcodeSize] = "fDest.xyzw";
-							applySwizzle(op3, dest);
-							applySwizzle(op1, dest);
-							sprintf_s(buffer, sizeof(buffer), "  %s = %s;\n", op1, dest);
+							src0 = bindings->Name;
+							srcAddress = instr->asOperands[1].specialName;
+							srcByteOffset = instr->asOperands[2].specialName;
+						}
+						dst0 = "r" + std::to_string(instr->asOperands[0].ui32RegisterNumber);
+						sprintf_s(buffer, sizeof(buffer), "// Known bad code for instruction (needs manual fix):\n");
+						appendOutput(buffer);
+						ASMLineOut(c, pos, size);
+
+						for (int component = 0; component < 4; component++) {
+							if (instr->asOperands[0].ui32CompMask & (1 << component)) {
+								switch (component) {
+								case 3: swiz = "w"; break;
+								case 2: swiz = "z"; break;
+								case 1: swiz = "y"; break;
+								case 0:
+								default: swiz = "x"; break;
+								}
+								sprintf_s(buffer, sizeof(buffer), "%s.%s = %s[%s].%s.swiz;\n", dst0.c_str(), swiz.c_str(), src0.c_str(),
+										  srcAddress.c_str(), srcByteOffset.c_str());
+								appendOutput(buffer);
+							}
+						}
+						removeBoolean(op1);
+						break;
+					}
+
+					case OPCODE_STORE_STRUCTURED: {
+						remapTarget(op1);
+						applySwizzle(".xyzw", op2);
+						applySwizzle(op1, op3);
+						int textureId = parseResourceIndex(op4);
+						sprintf_s(buffer, sizeof(buffer), "  %s[%s].%s = %s;\n", mTextureNames[textureId].c_str(), ci(op2).c_str(),
+								  ci(op3).c_str(), writeTarget(op1));
+						appendOutput(buffer);
+						break;
+					}
+
+					// Missing opcodes for SM5. Not implemented yet, but we want to generate some sort of code, in case
+					// these are used in needed shaders. That way we can hand edit the shader to make it usable, until this is completed.
+					case OPCODE_STORE_UAV_TYPED:
+					case OPCODE_LD_UAV_TYPED:
+					case OPCODE_LD_RAW:
+					case OPCODE_STORE_RAW: {
+						sprintf_s(buffer, sizeof(buffer), "// No code for instruction (needs manual fix):\n");
+						appendOutput(buffer);
+						ASMLineOut(c, pos, size);
+						break;
+					}
+
+					case OPCODE_DISCARD:
+						applySwizzle(".x", op1);
+						if (instr->eBooleanTestType == INSTRUCTION_TEST_ZERO)
+							sprintf_s(buffer, sizeof(buffer), "  if (%s == 0) discard;\n", ci(op1).c_str());
+						else
+							sprintf_s(buffer, sizeof(buffer), "  if (%s != 0) discard;\n", ci(op1).c_str());
+						appendOutput(buffer);
+						break;
+
+					// The GetDimensions can also see a 4 parameter version in the immediate case.
+					// https://msdn.microsoft.com/en-us/library/windows/desktop/hh447214(v=vs.85).aspx
+					//
+					// resinfo[_uint|_rcpFloat] dest[.mask], srcMipLevel.select_component, srcResource[.swizzle]
+					// In different variants based on input texture, becomes:
+					// void Object.GetDimensions(UINT MipLevel, typeX Width, typeX Height, typeX Elements, typeX Depth, typeX
+					// NumberOfLevels, typeX NumberOfSamples);
+					//
+					// We only see the immediate version l(0) in use, like:
+					//  resinfo_indexable(texture2d)(uint, uint, uint, uint)_uint r2.zw, l(0), t5.zwxy
+					//   Becomes 2 param version:   SectorAtlasTexture_UINT_TextureObject.GetDimensions(r2.z, r2.w);
+					//  resinfo_indexable(texture2dms)(float, float, float, float)_uint r0.xy, l(0), t0.xyzw
+					//   Becomes 3 param version:   DepthVPSampler_TextureObject.GetDimensions(r0.x, r0.y, bitmask.x);
+					//  resinfo_indexable(texture2darray)(float, float, float, float) r0.xy, l(0), t0.xyzw
+					//
+					// So, we'll only handle that immediate for now, and generate syntax errors if we see any other variant.
+					// We don't want to knowingly generate code that compiles, but has errors. Includes _rcpFloat as unknown.
+					case OPCODE_RESINFO: {
+						remapTarget(op1);
+						bool unknownVariant = true;
+						Operand output = instr->asOperands[0];
+						Operand constZero = instr->asOperands[1];
+						Operand texture = instr->asOperands[2];
+						RESINFO_RETURN_TYPE returnType = instr->eResInfoReturnType;
+						int texReg = texture.ui32RegisterNumber;
+						ResourceBinding bindInfo;
+						ResourceBinding *bindInfoPtr = &bindInfo;
+
+						memset(&bindInfo, 0, sizeof(bindInfo));
+						int bindstate = GetResourceFromBindingPoint(RTYPE_TEXTURE, texReg, shader->sInfo, &bindInfoPtr);
+						bool bindStripped = (bindstate == 0);
+
+						if (bindStripped) {
+							// In the case where the reflection information has been stripped from the headers,
+							// we are left with only the text line itself. Try to parse the text for variants
+							// we know, and add them to the bindInfo.
+							// e.g. from Batman and Witcher3:
+							//  resinfo_indexable(texture2d)(float,float,float,float)_uint r1.yw, l(0), t3.zxwy
+							char texType[opcodeSize];
+							char retType[opcodeSize];
+							int numInfo = sscanf_s(statement, "resinfo_indexable(%[^)])%s", texType, opcodeSize, retType, opcodeSize);
+							bool isConstant = (!strcmp(op2, "l(0),"));
+
+							if ((numInfo == 2) && isConstant) {
+								constZero.eType = OPERAND_TYPE_IMMEDIATE32;
+								constZero.afImmediates[0] = 0.0;
+								if (!strcmp(texType, "texture2d"))
+									bindInfoPtr->eDimension = REFLECT_RESOURCE_DIMENSION_TEXTURE2D;
+								else if (!strcmp(texType, "texture2dms"))
+									bindInfoPtr->eDimension = REFLECT_RESOURCE_DIMENSION_TEXTURE2DMS;
+								else if (!strcmp(texType, "texture2darray"))
+									bindInfoPtr->eDimension = REFLECT_RESOURCE_DIMENSION_TEXTURE2DARRAY;
+
+								bindInfoPtr->Name = string(op3, strrchr(op3, '.'));
+								if (strstr(retType, "_uint"))
+									returnType = RESINFO_INSTRUCTION_RETURN_UINT;
+								else
+									returnType = RESINFO_INSTRUCTION_RETURN_FLOAT;
+								texture.eType = OPERAND_TYPE_RESOURCE;
+								bindStripped = false;
+							}
+						}
+
+						// We only presently handle the float and _uint return types, and the const 0 mode.
+						// And the texture2d and textures2dms types. That's all we've seen so far.
+						if ((constZero.eType == OPERAND_TYPE_IMMEDIATE32) && (constZero.afImmediates[0] == 0.0) &&
+							(returnType == RESINFO_INSTRUCTION_RETURN_UINT || returnType == RESINFO_INSTRUCTION_RETURN_FLOAT) &&
+							texture.eType == OPERAND_TYPE_RESOURCE && !bindStripped) {
+
+							if (bindInfoPtr->eDimension == REFLECT_RESOURCE_DIMENSION_TEXTURE2D) {
+								if (returnType == RESINFO_INSTRUCTION_RETURN_UINT)
+									sprintf_s(buffer, sizeof(buffer), "  %s.GetDimensions(0, uiDest.x, uiDest.y, uiDest.z);\n",
+											  bindInfoPtr->Name.c_str());
+								else
+									sprintf_s(buffer, sizeof(buffer), "  %s.GetDimensions(0, fDest.x, fDest.y, fDest.z);\n",
+											  bindInfoPtr->Name.c_str());
+								appendOutput(buffer);
+								unknownVariant = false;
+							} else if (bindInfoPtr->eDimension == REFLECT_RESOURCE_DIMENSION_TEXTURE2DMS) {
+								if (returnType == RESINFO_INSTRUCTION_RETURN_UINT)
+									sprintf_s(buffer, sizeof(buffer), "  %s.GetDimensions(uiDest.x, uiDest.y, uiDest.z);\n",
+											  bindInfoPtr->Name.c_str());
+								else
+									sprintf_s(buffer, sizeof(buffer), "  %s.GetDimensions(fDest.x, fDest.y, fDest.z);\n",
+											  bindInfoPtr->Name.c_str());
+								appendOutput(buffer);
+								unknownVariant = false;
+							} else if (bindInfoPtr->eDimension == REFLECT_RESOURCE_DIMENSION_TEXTURE2DARRAY) {
+								if (returnType == RESINFO_INSTRUCTION_RETURN_UINT)
+									sprintf_s(buffer, sizeof(buffer), "  %s.GetDimensions(0, uiDest.x, uiDest.y, uiDest.z, uiDest.w);\n",
+											  bindInfoPtr->Name.c_str());
+								else
+									sprintf_s(buffer, sizeof(buffer), "  %s.GetDimensions(0, fDest.x, fDest.y, fDest.z, fDest.w);\n",
+											  bindInfoPtr->Name.c_str());
+								appendOutput(buffer);
+								unknownVariant = false;
+							}
+
+							// For the output, we saw a r3.xyzw which makes no sense for this instruction.
+							// Not sure this is fully correct, but the goal here is to apply the swizzle from the op3, which is the texture
+							// register, as the pieces that are valid to copy to the op1 output.
+							// The op3 texture swizzle can determine which components to use, and what order.
+							// The op1 output determines which ones are valid for output.
+							if (returnType == RESINFO_INSTRUCTION_RETURN_UINT) {
+								char dest[opcodeSize] = "uiDest.xyzw";
+								applySwizzle(op3, dest);
+								applySwizzle(op1, dest);
+								sprintf_s(buffer, sizeof(buffer), "  %s = %s;\n", op1, dest);
+								appendOutput(buffer);
+							} else {
+								char dest[opcodeSize] = "fDest.xyzw";
+								applySwizzle(op3, dest);
+								applySwizzle(op1, dest);
+								sprintf_s(buffer, sizeof(buffer), "  %s = %s;\n", op1, dest);
+								appendOutput(buffer);
+							}
+						}
+
+						if (unknownVariant) {
+							// Completely new variant, write out reminder for manual fix
+							string line = string(c + pos);
+							line = line.substr(0, line.find('\n'));
+							sprintf_s(buffer, sizeof(buffer),
+									  "// Unknown use of GetDimensions for resinfo_ from missing reflection info, need manual fix.\n");
+							appendOutput(buffer);
+							sprintf_s(buffer, sizeof(buffer), "// %s\n", line.c_str());
+							appendOutput(buffer);
+							sprintf_s(buffer, sizeof(buffer), "// Example for texture2d type, uint return:\n");
+							appendOutput(buffer);
+							sprintf_s(buffer, sizeof(buffer), "tx.GetDimensions(0, uiDest.x, uiDest.y, uiDest.z);\n");
+							appendOutput(buffer);
+							sprintf_s(buffer, sizeof(buffer), "rx = uiDest;\n");
 							appendOutput(buffer);
 						}
+						break;
 					}
 
-					if (unknownVariant) {
-						// Completely new variant, write out reminder for manual fix
-						string line = string(c + pos);
-						line = line.substr(0, line.find('\n'));
-						sprintf_s(buffer, sizeof(buffer),
-								  "// Unknown use of GetDimensions for resinfo_ from missing reflection info, need manual fix.\n");
+					case OPCODE_EVAL_SAMPLE_INDEX:
+						remapTarget(op1);
+						applySwizzle(op1, op2);
+						applySwizzle(".x", fixImm(op3, instr->asOperands[2]), true);
+						sprintf_s(buffer, sizeof(buffer), "  %s = EvaluateAttributeAtSample(%s, %s);\n", writeTarget(op1), op2, op3);
 						appendOutput(buffer);
-						sprintf_s(buffer, sizeof(buffer), "// %s\n", line.c_str());
+						break;
+
+					case OPCODE_EVAL_CENTROID:
+						remapTarget(op1);
+						applySwizzle(op1, op2);
+						sprintf_s(buffer, sizeof(buffer), "  %s = EvaluateAttributeCentroid(%s);\n", writeTarget(op1), op2);
 						appendOutput(buffer);
-						sprintf_s(buffer, sizeof(buffer), "// Example for texture2d type, uint return:\n");
+						break;
+
+					case OPCODE_EVAL_SNAPPED:
+						remapTarget(op1);
+						applySwizzle(op1, op2);
+						applySwizzle(".xy", fixImm(op3, instr->asOperands[2]), true);
+						sprintf_s(buffer, sizeof(buffer), "  %s = EvaluateAttributeSnapped(%s, %s);\n", writeTarget(op1), op2, op3);
 						appendOutput(buffer);
-						sprintf_s(buffer, sizeof(buffer), "tx.GetDimensions(0, uiDest.x, uiDest.y, uiDest.z);\n");
+						break;
+
+					case OPCODE_DERIV_RTX_COARSE: emitDeriv("ddx_coarse"); break;
+					case OPCODE_DERIV_RTX_FINE: emitDeriv("ddx_fine"); break;
+					case OPCODE_DERIV_RTY_COARSE: emitDeriv("ddy_coarse"); break;
+					case OPCODE_DERIV_RTY_FINE: emitDeriv("ddy_fine"); break;
+					case OPCODE_DERIV_RTX: emitDeriv("ddx"); break;
+					case OPCODE_DERIV_RTY: emitDeriv("ddy"); break;
+
+					case OPCODE_RET:
+						if (mShaderType.substr(0, 3) != "hs_") {
+							sprintf_s(buffer, sizeof(buffer), "  return;\n");
+							appendOutput(buffer);
+						}
+						break;
+
+					// Missing opcode needed for WatchDogs. Used as "retc_nz r0.x"
+					case OPCODE_RETC:
+						applySwizzle(".x", op1);
+						if (mShaderType.substr(0, 3) == "hs_") {
+							const char *retVal = (mHSPhase == 1) ? "output" : "patchConsts";
+							if (instr->eBooleanTestType == INSTRUCTION_TEST_ZERO)
+								sprintf_s(buffer, sizeof(buffer), "  if (%s == 0) return %s;\n", ci(op1).c_str(), retVal);
+							else
+								sprintf_s(buffer, sizeof(buffer), "  if (%s != 0) return %s;\n", ci(op1).c_str(), retVal);
+						} else {
+							if (instr->eBooleanTestType == INSTRUCTION_TEST_ZERO)
+								sprintf_s(buffer, sizeof(buffer), "  if (%s == 0) return;\n", ci(op1).c_str());
+							else
+								sprintf_s(buffer, sizeof(buffer), "  if (%s != 0) return;\n", ci(op1).c_str());
+						}
 						appendOutput(buffer);
-						sprintf_s(buffer, sizeof(buffer), "rx = uiDest;\n");
+						break;
+
+					// FarCry4 GeometryShader
+					case OPCODE_EMIT_STREAM:
+						sprintf_s(buffer, sizeof(buffer), "// Needs manual fix for instruction, maybe. \n//");
 						appendOutput(buffer);
+						ASMLineOut(c, pos, size);
+						sprintf_s(buffer, sizeof(buffer), "m0.Append(0); \n");
+						appendOutput(buffer);
+						break;
+					case OPCODE_CUT_STREAM:
+						sprintf_s(buffer, sizeof(buffer), "// Needs manual fix for instruction, maybe. \n//");
+						appendOutput(buffer);
+						ASMLineOut(c, pos, size);
+						sprintf_s(buffer, sizeof(buffer), "m0.RestartStrip(); \n");
+						appendOutput(buffer);
+						break;
+
+					case OPCODE_NOP:
+						// Used in MGSV:TPP, perhaps an artefact of having debug info enabled in shaders?
+						break;
+
+					default: logDecompileError("Unknown statement: " + string(statement)); return;
 					}
-					break;
+					iNr++;
 				}
-
-				case OPCODE_EVAL_SAMPLE_INDEX:
-					remapTarget(op1);
-					applySwizzle(op1, op2);
-					applySwizzle(".x", fixImm(op3, instr->asOperands[2]), true);
-					sprintf_s(buffer, sizeof(buffer), "  %s = EvaluateAttributeAtSample(%s, %s);\n", writeTarget(op1), op2, op3);
-					appendOutput(buffer);
-					break;
-
-				case OPCODE_EVAL_CENTROID:
-					remapTarget(op1);
-					applySwizzle(op1, op2);
-					sprintf_s(buffer, sizeof(buffer), "  %s = EvaluateAttributeCentroid(%s);\n", writeTarget(op1), op2);
-					appendOutput(buffer);
-					break;
-
-				case OPCODE_EVAL_SNAPPED:
-					remapTarget(op1);
-					applySwizzle(op1, op2);
-					applySwizzle(".xy", fixImm(op3, instr->asOperands[2]), true);
-					sprintf_s(buffer, sizeof(buffer), "  %s = EvaluateAttributeSnapped(%s, %s);\n", writeTarget(op1), op2, op3);
-					appendOutput(buffer);
-					break;
-
-				case OPCODE_DERIV_RTX_COARSE: emitDeriv("ddx_coarse"); break;
-				case OPCODE_DERIV_RTX_FINE: emitDeriv("ddx_fine"); break;
-				case OPCODE_DERIV_RTY_COARSE: emitDeriv("ddy_coarse"); break;
-				case OPCODE_DERIV_RTY_FINE: emitDeriv("ddy_fine"); break;
-				case OPCODE_DERIV_RTX: emitDeriv("ddx"); break;
-				case OPCODE_DERIV_RTY: emitDeriv("ddy"); break;
-
-				case OPCODE_RET:
-					if (mShaderType.substr(0, 3) == "hs_") {
-						// Do not emit premature "return;" inside Hull Shader phase blocks.
-					} else {
-						sprintf_s(buffer, sizeof(buffer), "  return;\n");
-						appendOutput(buffer);
-					}
-					break;
-
-				// Missing opcode needed for WatchDogs. Used as "retc_nz r0.x"
-				case OPCODE_RETC:
-					applySwizzle(".x", op1);
-					if (mShaderType.substr(0, 3) == "hs_") {
-						const char *retVal = (mHSPhase == 1) ? "output" : "patchConsts";
-						if (instr->eBooleanTestType == INSTRUCTION_TEST_ZERO)
-							sprintf_s(buffer, sizeof(buffer), "  if (%s == 0) return %s;\n", ci(op1).c_str(), retVal);
-						else
-							sprintf_s(buffer, sizeof(buffer), "  if (%s != 0) return %s;\n", ci(op1).c_str(), retVal);
-					} else {
-						if (instr->eBooleanTestType == INSTRUCTION_TEST_ZERO)
-							sprintf_s(buffer, sizeof(buffer), "  if (%s == 0) return;\n", ci(op1).c_str());
-						else
-							sprintf_s(buffer, sizeof(buffer), "  if (%s != 0) return;\n", ci(op1).c_str());
-					}
-					appendOutput(buffer);
-					break;
-
-				// FarCry4 GeometryShader
-				case OPCODE_EMIT_STREAM:
-					sprintf_s(buffer, sizeof(buffer), "// Needs manual fix for instruction, maybe. \n//");
-					appendOutput(buffer);
-					ASMLineOut(c, pos, size);
-					sprintf_s(buffer, sizeof(buffer), "m0.Append(0); \n");
-					appendOutput(buffer);
-					break;
-				case OPCODE_CUT_STREAM:
-					sprintf_s(buffer, sizeof(buffer), "// Needs manual fix for instruction, maybe. \n//");
-					appendOutput(buffer);
-					ASMLineOut(c, pos, size);
-					sprintf_s(buffer, sizeof(buffer), "m0.RestartStrip(); \n");
-					appendOutput(buffer);
-					break;
-
-				case OPCODE_NOP:
-					// Used in MGSV:TPP, perhaps an artefact of having debug info enabled in shaders?
-					break;
-
-				default: logDecompileError("Unknown statement: " + string(statement)); return;
-				}
-				iNr++;
 			}
 
 			NextLine(c, pos, size);
@@ -4892,9 +4897,28 @@ class Decompiler {
 			oDecls += "  float4 p" + to_string(k) + " = 0;\n";
 		}
 
+		string tempsMain = "";
+		if (!mDeclaredTempsHS_Main.empty()) {
+			tempsMain += "  float4 ";
+			size_t idx = 0;
+			for (int t : mDeclaredTempsHS_Main) {
+				tempsMain += "r" + to_string(t) + (++idx == mDeclaredTempsHS_Main.size() ? ";\n" : ", ");
+			}
+		}
+
+		string tempsFork = "";
+		if (!mDeclaredTempsHS_Fork.empty()) {
+			tempsFork += "  float4 ";
+			size_t idx = 0;
+			for (int t : mDeclaredTempsHS_Fork) {
+				tempsFork += "r" + to_string(t) + (++idx == mDeclaredTempsHS_Fork.size() ? ";\n" : ", ");
+			}
+		}
+
+		string vpcDecls = "  float4 vpc0=0, vpc1=0, vpc2=0, vpc3=0, vpc4=0, vpc5=0, vpc6=0, vpc7=0, vpc8=0, vpc9=0;\n";
 		string forkHeader = "HS_PATCH_CONSTANTS PatchConstantFunc(\n  InputPatch<HS_INPUT_CP, " + to_string(mInputControlPoints) +
 							"> ip,\n  uint PatchID : SV_PrimitiveID)\n{\n  HS_PATCH_CONSTANTS patchConsts = (HS_PATCH_CONSTANTS)0;\n" +
-							oDecls + mHSUnpackCode;
+							oDecls + tempsFork + vpcDecls + mHSUnpackCode;
 		finalOut.insert(finalOut.end(), forkHeader.begin(), forkHeader.end());
 		finalOut.insert(finalOut.end(), mHSForkPhase.begin(), mHSForkPhase.end());
 
@@ -4922,7 +4946,7 @@ class Decompiler {
 			"HS_OUTPUT_CP main(\n  InputPatch<HS_INPUT_CP, " +
 			to_string(mInputControlPoints) +
 			"> ip,\n  uint i : SV_OutputControlPointID,\n  uint PatchID : SV_PrimitiveID)\n{\n  HS_OUTPUT_CP output = (HS_OUTPUT_CP)0;\n" +
-			oDecls + mHSUnpackCode;
+			oDecls + tempsMain + mHSUnpackCode;
 		finalOut.insert(finalOut.end(), mainHeader.begin(), mainHeader.end());
 		finalOut.insert(finalOut.end(), mHSControlPointPhase.begin(), mHSControlPointPhase.end());
 
