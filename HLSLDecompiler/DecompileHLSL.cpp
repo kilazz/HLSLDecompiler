@@ -65,21 +65,21 @@ enum DataType {
 
 // Represents an entry in a constant buffer
 struct BufferEntry {
-	DataType bt;
-	int matrixRow;
-	bool isRowMajor;
+	DataType bt = DT_Unknown;
+	int matrixRow = 0;
+	bool isRowMajor = false;
 	string Name;
 };
 
 struct PatchConstantAssignment {
 	string targetField;
-	int slot;
+	int slot = 0;
 	string mask;
 };
 
 struct CPOutputAssignment {
 	string targetField;
-	int slot;
+	int slot = 0;
 	string mask;
 };
 
@@ -117,18 +117,19 @@ class Decompiler {
 	// Register tracking and remapping
 	map<string, string> mOutputRegisterValues;
 	map<string, DataType> mOutputRegisterType;
+
 	string mShaderType;
 	string mSV_Position;
-	bool mUsesProjection;
-	Instruction *mLastStatement;
+	bool mUsesProjection = false;
+	Instruction *mLastStatement = nullptr;
 	string mMulOperand, mMulOperand2, mMulTarget;
 	StringStringMap mCorrectedIndexRegisters;
 	StringStringMap mRemappedOutputRegisters;
 	vector<pair<string, string>> mRemappedInputRegisters;
 	set<string> mBooleanRegisters;
 
-	int StereoParamsReg;
-	int IniParamsReg;
+	int StereoParamsReg = -1;
+	int IniParamsReg = -1;
 
 	// Main output buffer
 	vector<char> mOutput;
@@ -149,6 +150,9 @@ class Decompiler {
 	set<int> mDeclaredTempsHS_Main;
 	set<int> mDeclaredTempsHS_Fork;
 
+	bool mInForkLoop = false;
+	int mForkPhaseCount = 0;
+
 	// Structs definitions generated from signatures
 	string mStructInput;
 	string mStructOutput;
@@ -160,33 +164,33 @@ class Decompiler {
 	vector<PatchConstantAssignment> mHSPatchConstantAssignments;
 	vector<CPOutputAssignment> mHSCPOutputAssignments;
 
-	size_t mCodeStartPos;
-	bool mErrorOccurred;
-	bool mFixSvPosition;
-	bool mRecompileVs;
-	bool mPatched;
+	size_t mCodeStartPos = 0;
+	bool mErrorOccurred = false;
+	bool mFixSvPosition = false;
+	bool mRecompileVs = false;
+	bool mPatched = false;
 	string ZRepair_DepthTexture1, ZRepair_DepthTexture2;
 	string BackProject_Vector1, BackProject_Vector2;
-	char ZRepair_DepthTextureReg1, ZRepair_DepthTextureReg2;
+	char ZRepair_DepthTextureReg1 = 0, ZRepair_DepthTextureReg2 = 0;
 	vector<string> ZRepair_Dependencies1, ZRepair_Dependencies2;
-	bool mZRepair_DepthBuffer;
+	bool mZRepair_DepthBuffer = false;
 	vector<string> InvTransforms;
 	string ZRepair_ZPosCalc1, ZRepair_ZPosCalc2;
 	string ZRepair_PositionTexture;
 	string ZRepair_WorldPosCalc;
 	string ObjectPos_ID1, ObjectPos_ID2, ObjectPos_MUL1, ObjectPos_MUL2;
 	string MatrixPos_ID1, MatrixPos_MUL1;
-	int uuidVar;
+	int uuidVar = 0;
 
 	// Auto-indent of generated code
 	const char *indent = "  ";
-	int nestCount;
+	int nestCount = 0;
 
 	// Statement operand storage buffers and pointer array for loop-based parsing
-	char statement[128];
-	char op1[opcodeSize], op2[opcodeSize], op3[opcodeSize], op4[opcodeSize], op5[opcodeSize], op6[opcodeSize], op7[opcodeSize],
-		op8[opcodeSize], op9[opcodeSize], op10[opcodeSize], op11[opcodeSize], op12[opcodeSize], op13[opcodeSize], op14[opcodeSize],
-		op15[opcodeSize];
+	char statement[128] = {0};
+	char op1[opcodeSize] = {0}, op2[opcodeSize] = {0}, op3[opcodeSize] = {0}, op4[opcodeSize] = {0}, op5[opcodeSize] = {0};
+	char op6[opcodeSize] = {0}, op7[opcodeSize] = {0}, op8[opcodeSize] = {0}, op9[opcodeSize] = {0}, op10[opcodeSize] = {0};
+	char op11[opcodeSize] = {0}, op12[opcodeSize] = {0}, op13[opcodeSize] = {0}, op14[opcodeSize] = {0}, op15[opcodeSize] = {0};
 	char *ops[15];
 
 	// Suppress all these warnings, as they are an _int64 mismatch for the aging sscanf, which should
@@ -194,7 +198,7 @@ class Decompiler {
 #pragma warning(push)
 #pragma warning(disable : 6328)
 
-	Decompiler() : mLastStatement(0), uuidVar(0), nestCount(0) {
+	Decompiler() {
 		ops[0] = op1;
 		ops[1] = op2;
 		ops[2] = op3;
@@ -276,7 +280,7 @@ class Decompiler {
 	// This is used when we aren't sure what to do with something, and gives us the lines
 	// in the output as ASM for reference. Specifically modifying the input pos.
 	void ASMLineOut(const char *c, size_t &pos, size_t max) {
-		char buffer[256];
+		char buffer[256] = {0};
 		const char *startPos = c + pos;
 		const char *eolPos = strchr(startPos, '\n');
 		std::string line(startPos, eolPos);
@@ -309,15 +313,12 @@ class Decompiler {
 	// This does also unfortunately create warnings for the TEXCOORD outputs, but
 	// I was unable to find any other way to avoid the fxc packing optimization.
 	bool SkipPacking(const char *c, const map<string, DataType> &inUse) {
-		char name[256], mask[16], sysvalue[16], format[16];
-		int index, reg1, reg2;
-		format[0] = 0;
-		mask[0] = 0;
+		char name[256] = {0}, mask[16] = {0}, sysvalue[16] = {0}, format[16] = {0};
+		int index = 0, reg1 = 0, reg2 = 0;
 		size_t pos = 0;
 
-		int numRead = sscanf_s(c + pos, "// %s %d %s %d %s %s", name, (int)sizeof(name), &index, mask, (int)sizeof(mask), &reg1, sysvalue,
-							   (int)sizeof(sysvalue), format, (int)sizeof(format));
-		if (numRead != 6)
+		if (sscanf_s(c + pos, "// %s %d %s %d %s %s", name, (int)sizeof(name), &index, mask, (int)sizeof(mask), &reg1, sysvalue,
+					 (int)sizeof(sysvalue), format, (int)sizeof(format)) != 6)
 			return false;
 		name[sizeof(name) - 1] = '\0'; // Appease the static analysis gods
 		if (strcmp(name, "TEXCOORD") != 0)
@@ -325,9 +326,7 @@ class Decompiler {
 
 		// Any v* register already active needs to be skipped, to allow the
 		// normal packing to succeed. input:v1.xy + w1.zw. or output:o1.xy + p1.zw
-		if (inUse.find(string("v" + to_string(reg1))) != inUse.end())
-			return false;
-		if (inUse.find(string("o" + to_string(reg1))) != inUse.end())
+		if (inUse.find(string("v" + to_string(reg1))) != inUse.end() || inUse.find(string("o" + to_string(reg1))) != inUse.end())
 			return false;
 
 		// skip pointer in order to parse next line
@@ -335,19 +334,12 @@ class Decompiler {
 			pos++;
 		pos++;
 
-		numRead = sscanf_s(c + pos, "// %s %d %s %d %s %s", name, (int)sizeof(name), &index, mask, (int)sizeof(mask), &reg2, sysvalue,
-						   (int)sizeof(sysvalue), format, (int)sizeof(format));
-		if (numRead != 6)
+		if (sscanf_s(c + pos, "// %s %d %s %d %s %s", name, (int)sizeof(name), &index, mask, (int)sizeof(mask), &reg2, sysvalue,
+					 (int)sizeof(sysvalue), format, (int)sizeof(format)) != 6)
 			return false;
 		name[sizeof(name) - 1] = '\0'; // Appease the static analysis gods
-		if (strcmp(name, "TEXCOORD") != 0)
-			return false;
 
-		// The key aspect is whether we are supposed to use a different Register.
-		if (reg1 == reg2)
-			return false;
-
-		return true;
+		return (strcmp(name, "TEXCOORD") == 0 && reg1 != reg2);
 	}
 
 	// Looking up the interpolation values for a given input, like 'centroid'
@@ -443,16 +435,13 @@ class Decompiler {
 
 			// Read list
 			while (pos < size) {
-				char name[256], mask[16], format[16], format2[16];
-				int index, slot;
-				format[0] = 0;
-				mask[0] = 0;
+				char name[256] = {0}, mask[16] = {0}, format[16] = {0}, format2[16] = {0};
+				int index = 0, slot = 0;
 				if (!strncmp(c + pos, "// no Input", strlen("// no Input")))
 					break;
 
-				int numRead = sscanf_s(c + pos, "// %s %d %s %d %s %s", name, (int)sizeof(name), &index, mask, (int)sizeof(mask), &slot,
-									   format2, (int)sizeof(format2), format, (int)sizeof(format));
-				if (numRead != 6)
+				if (sscanf_s(c + pos, "// %s %d %s %d %s %s", name, (int)sizeof(name), &index, mask, (int)sizeof(mask), &slot, format2,
+							 (int)sizeof(format2), format, (int)sizeof(format)) != 6)
 					break;
 
 				// Finish type
@@ -465,7 +454,7 @@ class Decompiler {
 
 				// Already used?
 				int count = inputSlotCount[slot]++;
-				char registerName[32];
+				char registerName[32] = {0};
 				string regNameStr;
 
 				if (count == 0) {
@@ -526,15 +515,12 @@ class Decompiler {
 				if (!strncmp(c + pos, "//\n", 3) || !strncmp(c + pos, "//\r", 3))
 					break;
 			}
-
 			if (isHS || isDS)
 				mStructInput += "};\n\n";
-
-			if (isDS) {
+			if (isDS)
 				mDSUnpackCode += "  }\n";
-			} else if (isHS) {
+			else if (isHS)
 				mHSUnpackCode += "  }\n";
-			}
 		}
 	}
 
@@ -564,27 +550,23 @@ class Decompiler {
 
 			mStructPatchConstants = "struct " + (isHS ? string("HS_PATCH_CONSTANTS") : string("DS_PATCH_CONSTANTS")) + " {\n";
 
-			if (mDomainType == "quad") {
+			if (mDomainType == "quad")
 				mStructPatchConstants += "  float edges[4] : SV_TessFactor;\n  float inside[2] : SV_InsideTessFactor;\n";
-			} else if (mDomainType == "tri") {
+			else if (mDomainType == "tri")
 				mStructPatchConstants += "  float edges[3] : SV_TessFactor;\n  float inside : SV_InsideTessFactor;\n";
-			} else {
+			else
 				mStructPatchConstants += "  float edges[2] : SV_TessFactor;\n";
-			}
 
 			string vpcUnpack = "  float4 vpc0=0, vpc1=0, vpc2=0, vpc3=0, vpc4=0, vpc5=0, vpc6=0, vpc7=0, vpc8=0, vpc9=0;\n";
 
 			while (pos < size) {
-				char name[256], mask[16], format[16], format2[16];
+				char name[256] = {0}, mask[16] = {0}, format[16] = {0}, format2[16] = {0};
 				int index, slot;
-				format[0] = 0;
-				mask[0] = 0;
 				if (!strncmp(c + pos, "// no Patch Constant", strlen("// no Patch Constant")))
 					break;
 
-				int numRead = sscanf_s(c + pos, "// %s %d %s %d %s %s", name, (int)sizeof(name), &index, mask, (int)sizeof(mask), &slot,
-									   format2, (int)sizeof(format2), format, (int)sizeof(format));
-				if (numRead == 6) {
+				if (sscanf_s(c + pos, "// %s %d %s %d %s %s", name, (int)sizeof(name), &index, mask, (int)sizeof(mask), &slot, format2,
+							 (int)sizeof(format2), format, (int)sizeof(format)) == 6) {
 					if (strlen(mask) > 1)
 						sprintf_s(format2, "%s%d", format, (int)strlen(mask));
 					else
@@ -680,10 +662,8 @@ class Decompiler {
 				mStructOutput = "struct HS_OUTPUT_CP {\n";
 
 			while (pos < size) {
-				char name[256], mask[16], format[16], format2[16];
+				char name[256] = {0}, mask[16] = {0}, format[16] = {0}, format2[16] = {0};
 				int index, slot;
-				format[0] = 0;
-				mask[0] = 0;
 				if (!strncmp(c + pos, "// no Output", strlen("// no Output")))
 					break;
 
@@ -699,49 +679,56 @@ class Decompiler {
 
 					int count = outputSlotCount[slot]++;
 					char registerName[32];
+					char structFieldName[64];
 					string regNameStr;
 
 					if (count == 0) {
 						sprintf_s(registerName, sizeof(registerName), "o%d", slot);
+						sprintf_s(structFieldName, sizeof(structFieldName), isHS ? "out_o%d" : "o%d", slot);
 						regNameStr = registerName;
 					} else {
 						char prefix[32];
-						if (count == 1)
+						if (count == 1) {
 							sprintf_s(prefix, sizeof(prefix), "p%d", slot);
-						else
+							sprintf_s(structFieldName, sizeof(structFieldName), isHS ? "out_p%d" : "p%d", slot);
+						} else {
 							sprintf_s(prefix, sizeof(prefix), "p%d_%d", slot, count);
+							sprintf_s(structFieldName, sizeof(structFieldName), isHS ? "out_p%d_%d" : "p%d_%d", slot, count);
+						}
 
-						string newName = string(prefix) + ".";
-						const char *INDEX_MASK = "xyzw";
-						for (size_t j = 0; j < strlen(mask); ++j)
-							newName.push_back(INDEX_MASK[j]);
-						string origReg = string("o") + to_string(slot);
-						mRemappedOutputRegisters[origReg + "." + string(mask)] = newName;
-
-						if (strlen(mask) > 1) {
-							for (size_t j = 0; j < strlen(mask); ++j) {
-								newName = string(prefix) + ".";
+						if (!isHS) { // DO NOT REMAP HS OUTPUTS. HS packs from o[32] manually!
+							string newName = string(prefix) + ".";
+							const char *INDEX_MASK = "xyzw";
+							for (size_t j = 0; j < strlen(mask); ++j)
 								newName.push_back(INDEX_MASK[j]);
-								string oldName = origReg + ".";
-								oldName.push_back(mask[j]);
-								mRemappedOutputRegisters[oldName] = newName;
+							string origReg = string("o") + to_string(slot);
+							mRemappedOutputRegisters[origReg + "." + string(mask)] = newName;
+
+							if (strlen(mask) > 1) {
+								for (size_t j = 0; j < strlen(mask); ++j) {
+									newName = string(prefix) + ".";
+									newName.push_back(INDEX_MASK[j]);
+									string oldName = origReg + ".";
+									oldName.push_back(mask[j]);
+									mRemappedOutputRegisters[oldName] = newName;
+								}
 							}
 						}
 						regNameStr = prefix;
 					}
 					char buffer[256];
 					if (isHS) {
-						sprintf_s(buffer, "  %s %s : %s%d;\n", format2, regNameStr.c_str(), name, index);
+						sprintf_s(buffer, "  %s %s : %s%d;\n", format2, structFieldName, name, index);
 						mStructOutput += buffer;
-						mCPOutputMapping[slot] = regNameStr;
+						mCPOutputMapping[slot] = structFieldName;
 
 						CPOutputAssignment cpo;
-						cpo.targetField = regNameStr;
+						cpo.targetField = structFieldName;
 						cpo.slot = slot;
 						cpo.mask = (mask[0] == '\0') ? "xyzw" : mask;
 						mHSCPOutputAssignments.push_back(cpo);
 					} else {
-						sprintf_s(buffer, "  out %s %s : %s%d,\n", format2, regNameStr.c_str(), name, index);
+						sprintf_s(buffer, "  out %s %s : %s%d,\n", format2, structFieldName, name, index);
 						mOutput.insert(mOutput.end(), buffer, buffer + strlen(buffer));
 					}
 					if (!strcmp(name, "SV_Position"))
@@ -753,11 +740,14 @@ class Decompiler {
 									   (int)sizeof(reg), sysValue, (int)sizeof(sysValue), format, (int)sizeof(format));
 
 					if (isHS) {
-						sprintf_s(buffer, "  %s %s : %s;\n", format, reg, name);
+						char structFieldName[64];
+						sprintf_s(structFieldName, sizeof(structFieldName), "out_%s", reg);
+
+						sprintf_s(buffer, "  %s %s : %s;\n", format, structFieldName, name);
 						mStructOutput += buffer;
 
 						CPOutputAssignment cpo;
-						cpo.targetField = reg;
+						cpo.targetField = structFieldName;
 						cpo.slot = parseResourceIndex(reg);
 						cpo.mask = (mask[0] == '\0') ? "xyzw" : mask;
 						mHSCPOutputAssignments.push_back(cpo);
@@ -807,10 +797,8 @@ class Decompiler {
 
 		map<int, int> zeroOutputSlotCount;
 		while (pos < size) {
-			char name[256], mask[16], format[16], format2[16];
+			char name[256] = {0}, mask[16] = {0}, format[16] = {0}, format2[16] = {0};
 			int index, slot;
-			format[0] = 0;
-			mask[0] = 0;
 			if (!strncmp(c + pos, "// no Output", strlen("// no Output")))
 				break;
 			int numRead = sscanf_s(c + pos, "// %s %d %s %d %s %s", name, (int)sizeof(name), &index, mask, (int)sizeof(mask), &slot,
@@ -863,9 +851,8 @@ class Decompiler {
 			NextLine(c, pos, size);
 
 		while (pos < size) {
-			char name[256], type[16], format[16], dim[16], bind[16];
+			char name[256] = {0}, type[16] = {0}, format[16] = {0}, dim[16] = {0}, bind[16] = {0};
 			int arraySize;
-			type[0] = 0;
 			int numRead = sscanf_s(c + pos, "// %s %s %s %s %s %d", name, (int)sizeof(name), type, (int)sizeof(type), format,
 								   (int)sizeof(format), dim, (int)sizeof(dim), bind, (int)sizeof(bind), &arraySize);
 
@@ -1047,7 +1034,7 @@ class Decompiler {
 		immediateEntry.matrixRow = 0;
 		immediateEntry.isRowMajor = false;
 		immediateEntry.bt = DT_float4;
-		mCBufferData[-1 << 16] = immediateEntry;
+		mCBufferData[static_cast<int>(0xFFFF0000)] = immediateEntry;
 		vector<int> pendingStructAttributes[8];
 		int structLevel = -1;
 		const char *headerid = "// cbuffer ";
@@ -1061,9 +1048,9 @@ class Decompiler {
 			}
 			if (pos >= size - strlen(headerid))
 				return;
-			char name[256];
-			int numRead = sscanf_s(c + pos, "// cbuffer %s", name, (int)sizeof(name));
-			if (numRead != 1)
+			char name[256] = {0};
+			int cbufRead = sscanf_s(c + pos, "// cbuffer %s", name, (int)sizeof(name));
+			if (cbufRead != 1)
 				return;
 			NextLine(c, pos, size);
 			NextLine(c, pos, size);
@@ -1123,8 +1110,7 @@ class Decompiler {
 					while (c[pos] != '/' && pos < size)
 						pos++;
 					int offset = 0;
-					numRead = sscanf_s(c + pos, "// Offset: %d", &offset);
-					if (numRead != 1)
+					if (sscanf_s(c + pos, "// Offset: %d", &offset) != 1)
 						return;
 					if (!structLevel)
 						sprintf_s(buffer + bpos, sizeof(buffer) - bpos, " : packoffset(c%d);\n\n", offset / 16);
@@ -1138,11 +1124,13 @@ class Decompiler {
 
 					size_t arrayPos = structName.find('[');
 					if (arrayPos == string::npos) {
-						for (vector<int>::iterator it = pendingStructAttributes[structLevel].begin();
-							 it != pendingStructAttributes[structLevel].end(); ++it) {
-							mCBufferData[*it].Name = structName + mCBufferData[*it].Name;
-							if (structLevel)
-								pendingStructAttributes[structLevel - 1].push_back(*it);
+						if (structLevel >= 0) {
+							for (vector<int>::iterator it = pendingStructAttributes[structLevel].begin();
+								 it != pendingStructAttributes[structLevel].end(); ++it) {
+								mCBufferData[*it].Name = structName + mCBufferData[*it].Name;
+								if (structLevel > 0)
+									pendingStructAttributes[structLevel - 1].push_back(*it);
+							}
 						}
 					} else {
 						int arraySize;
@@ -1153,29 +1141,33 @@ class Decompiler {
 						}
 						structName = structName.substr(0, arrayPos);
 						int structSize = 0;
-						for (vector<int>::iterator j = pendingStructAttributes[structLevel].begin();
-							 j != pendingStructAttributes[structLevel].end(); ++j)
-							structSize += getDataTypeSize(mCBufferData[*j].bt);
-						for (int k = arraySize - 1; k >= 0; --k) {
-							sprintf_s(buffer, sizeof(buffer), "%s[%d].", structName.c_str(), k);
+						if (structLevel >= 0) {
 							for (vector<int>::iterator j = pendingStructAttributes[structLevel].begin();
-								 j != pendingStructAttributes[structLevel].end(); ++j) {
-								mCBufferData[*j + k * structSize].Name = buffer + mCBufferData[*j].Name;
-								if (structLevel)
-									pendingStructAttributes[structLevel - 1].push_back(*j + k * structSize);
+								 j != pendingStructAttributes[structLevel].end(); ++j)
+								structSize += getDataTypeSize(mCBufferData[*j].bt);
+							for (int k = arraySize - 1; k >= 0; --k) {
+								sprintf_s(buffer, sizeof(buffer), "%s[%d].", structName.c_str(), k);
+								for (vector<int>::iterator j = pendingStructAttributes[structLevel].begin();
+									 j != pendingStructAttributes[structLevel].end(); ++j) {
+									mCBufferData[*j + k * structSize].Name = buffer + mCBufferData[*j].Name;
+									if (structLevel > 0)
+										pendingStructAttributes[structLevel - 1].push_back(*j + k * structSize);
+								}
 							}
 						}
 					}
-					pendingStructAttributes[structLevel].clear();
+					if (structLevel >= 0)
+						pendingStructAttributes[structLevel].clear();
 					NextLine(c, pos, size);
 					--structLevel;
 					continue;
 				}
-				char type[16];
-				type[0] = 0;
+
+				char type[16] = {0};
+				char name[256] = {0};
 				// With very long names, the disassembled code can have no space at the end, like:
 				//   float2 __0RealtimeReflMul__1EnvCubeReflMul__2__3;// Offset:   96 Size:     8
-				numRead = sscanf_s(c + pos, "// %s %[^;]", type, (int)sizeof(type), name, (int)sizeof(name));
+				int numRead = sscanf_s(c + pos, "// %s %[^;]", type, (int)sizeof(type), name, (int)sizeof(name));
 				if (numRead != 2) {
 					NextLine(c, pos, size);
 					continue;
@@ -1237,7 +1229,7 @@ class Decompiler {
 						counter = 4;
 					else if (e.bt == DT_float2 || e.bt == DT_uint2 || e.bt == DT_int2 || e.bt == DT_float3 || e.bt == DT_uint3 ||
 							 e.bt == DT_int3 || e.bt == DT_bool4 || e.bt == DT_float4 || e.bt == DT_uint4 || e.bt == DT_int4)
-						counter = 16; // FIX: In HLSL constant buffers, ALL vector array elements align to 16 bytes!
+						counter = 16;
 					else if (e.bt == DT_float4x2 || e.bt == DT_float2x4)
 						counter = 16 * 2;
 					else if (e.bt == DT_float3x3 || e.bt == DT_float4x3)
@@ -1346,7 +1338,7 @@ class Decompiler {
 					// For bool values, the usual conversion by %e creates QNAN, so handle them specifically. (e.g. = 0xffffffff)
 					else if (e.bt == DT_bool) {
 						unsigned int bHex = 0;
-						numRead = sscanf_s(c + pos, "// = 0x%lx", &bHex);
+						numRead = sscanf_s(c + pos, "// = 0x%x", &bHex);
 						NextLine(c, pos, size);
 						string bString = (bHex == 0) ? "false" : "true";
 						if (structLevel < 0) {
@@ -1466,11 +1458,9 @@ class Decompiler {
 	// Swizzle and Operand Translator
 	// =========================================================================
 	void applySwizzle(const char *left, char *right, bool useInt = false) {
-		char right2[opcodeSize];
-		if (strlen(right) == 0) {
-			logDecompileError("applySwizzle called with no second parameter: " + string(left));
+		char right2[opcodeSize] = {0};
+		if (strlen(right) == 0)
 			return;
-		}
 		if (right[strlen(right) - 1] == ',')
 			right[strlen(right) - 1] = 0;
 
@@ -1539,10 +1529,8 @@ class Decompiler {
 			}
 		} else {
 			strPos = strrchr(right, '.') + 1;
-			if (strPos == (const char *)1) {
-				logDecompileError("applySwizzle 2nd parameter missing '.': " + string(right));
+			if (strPos == (const char *)1)
 				return;
-			}
 			strncpy_s(right2, right, strPos - right);
 			right2[strPos - right] = 0;
 			pos = strlen(right2);
@@ -1568,22 +1556,20 @@ class Decompiler {
 				}
 			}
 			if (strPos) {
-				int bufIndex = 0, bufOffset;
-				char regAndSwiz[opcodeSize];
+				int bufIndex = 0, bufOffset = 0;
+				char regAndSwiz[opcodeSize] = {0};
 
 				// By scanning these in this order, we are sure to cover every variant, without mismatches.
 				// Like: -cb2[r12.w+63].xyzx as : -cb(bufIndex)[(regAndSwiz)+(bufOffset)]
 				if (sscanf_s(strPos, "cb%d[%[^+]+%d]", &bufIndex, regAndSwiz, (int)sizeof(regAndSwiz), &bufOffset) == 3) {
 					CBufferData::iterator it = mCBufferData.find((bufIndex << 16) + bufOffset * 16);
-					if (it == mCBufferData.end()) {
-						logDecompileError("Missing constant buffer name: " + string(right2));
-						return;
-					}
-					if (strncmp(strPos, it->second.Name.c_str(), 4) == 0) {
-						string full = strPos;
-						size_t dotspot = full.rfind('.');
-						it->second.Name = full.substr(0, dotspot);
-						regAndSwiz[0] = 0;
+					if (it != mCBufferData.end()) {
+						if (strncmp(strPos, it->second.Name.c_str(), 4) == 0) {
+							string full = strPos;
+							size_t dotspot = full.rfind('.');
+							it->second.Name = full.substr(0, dotspot);
+							regAndSwiz[0] = 0;
+						}
 					}
 				}
 				// Like: cb1[29].xyzx Most common variant.
@@ -1608,7 +1594,6 @@ class Decompiler {
 					bufIndex = -1;
 					bufOffset = 0;
 				} else {
-					logDecompileError("Error parsing buffer register, unknown variant: " + string(right2));
 					return;
 				}
 
@@ -1674,7 +1659,7 @@ class Decompiler {
 
 				bool multiVariable = false;
 				string compVarNames[4];
-				char compSubSwiz[4];
+				char compSubSwiz[4] = {0};
 				DataType compTypes[4];
 				bool resolvedMulti = false;
 
@@ -1689,14 +1674,14 @@ class Decompiler {
 							multiVariable = true;
 					}
 					if (allFound) {
-						char resolvedBuf[1024];
+						char resolvedBuf[1024] = {0};
 						if (!multiVariable) {
 							DataType dt = compTypes[0];
 							bool isScalar = (dt == DT_float || dt == DT_uint || dt == DT_int || dt == DT_bool);
 							if (isScalar) {
-								if (numComps == 1) {
+								if (numComps == 1)
 									sprintf_s(resolvedBuf, "%s", compVarNames[0].c_str());
-								} else {
+								else {
 									sprintf_s(resolvedBuf, "float%zu(", numComps);
 									for (size_t c = 0; c < numComps; ++c)
 										sprintf_s(resolvedBuf + strlen(resolvedBuf), sizeof(resolvedBuf) - strlen(resolvedBuf), "%s,",
@@ -1736,19 +1721,14 @@ class Decompiler {
 						i = mCBufferData.find((bufIndex << 16) + bufOffset * 16 + 8);
 					if (i == mCBufferData.end() && strrchr(right2, '.')[1] == 'w')
 						i = mCBufferData.find((bufIndex << 16) + bufOffset * 16 + 12);
-					if (i == mCBufferData.end()) {
-						logDecompileError("3 Error parsing buffer offset: " + string(right2));
+					if (i == mCBufferData.end())
 						return;
-					}
 
-					char right3[opcodeSize];
-					right3[0] = 0;
+					char right3[opcodeSize] = {0};
 					strcat_s(right3, i->second.Name.c_str());
 					strPos = strchr(strPos, ']');
-					if (!strPos) {
-						logDecompileError("4 Error parsing buffer offset: " + string(right2));
+					if (!strPos)
 						return;
-					}
 
 					if (regAndSwiz[0]) {
 						char *indexPos = strchr(right3, '[');
@@ -1757,14 +1737,14 @@ class Decompiler {
 						string indexRegisterName(regAndSwiz, strchr(regAndSwiz, '.'));
 						StringStringMap::iterator isCorrected = mCorrectedIndexRegisters.find(indexRegisterName);
 						if (isCorrected != mCorrectedIndexRegisters.end()) {
-							char newOperand[opcodeSize];
+							char newOperand[opcodeSize] = {0};
 							strcpy_s(newOperand, isCorrected->second.c_str());
 							applySwizzle(regAndSwiz, newOperand, true);
 							sprintf_s(right3 + strlen(right3), sizeof(right3) - strlen(right3), "[%s]", newOperand);
 						} else if (mLastStatement && mLastStatement->eOpcode == OPCODE_IMUL &&
 								   (i->second.bt == DT_float4x4 || i->second.bt == DT_float4x3 || i->second.bt == DT_float4x2 ||
 									i->second.bt == DT_float2x4 || i->second.bt == DT_float3x4 || i->second.bt == DT_float3x3)) {
-							char newOperand[opcodeSize];
+							char newOperand[opcodeSize] = {0};
 							strcpy_s(newOperand, mMulOperand.c_str());
 							applySwizzle(regAndSwiz, newOperand, true);
 							sprintf_s(right3 + strlen(right3), sizeof(right3) - strlen(right3), "[%s]", newOperand);
@@ -1789,14 +1769,14 @@ class Decompiler {
 							// is not a zero index element, we need to preserve the offset.
 							// Like a JC3 variant of cb0[r19.w + 63].xyzw becoming Globals[r19.w+63]
 							// Normally an offset turns into an actual named variable.
-							int offset;
+							int offset = 0;
 							sscanf_s(i->second.Name.c_str(), "%*[^[][%d]", &offset);
 							if (offset == 0) {
 								// e.g. cb0[r21.y + 55] -> PointLight[r21.y]
 								base.replace(left, length, regAndSwiz);
 							} else {
 								// leave it named with register and bufOffset, e.g. cb0[r19.w + 63] -> Globals[r19.w+63]
-								char regAndOffset[opcodeSize];
+								char regAndOffset[opcodeSize] = {0};
 								sprintf_s(regAndOffset, "%s+%d", regAndSwiz, bufOffset);
 								base.replace(left, length, regAndOffset);
 							}
@@ -1826,7 +1806,7 @@ class Decompiler {
 									sprintf_s(right3 + strlen(right3), sizeof(right3) - strlen(right3),
 											  i->second.isRowMajor ? "_m%d3" : "_m3%d", i->second.matrixRow);
 									break;
-								default: logDecompileError("Error parsing matrix index: " + string(right2));
+								default: break;
 								}
 							}
 						} else {
@@ -1850,7 +1830,7 @@ class Decompiler {
 
 	int ReadStatement(const char *pos) {
 		// Kill newline.
-		char lineBuffer[2048];
+		char lineBuffer[2048] = {0};
 		strncpy_s(lineBuffer, pos, 2047);
 		lineBuffer[2047] = 0;
 		char *newlinePos = strchr(lineBuffer, '\n');
@@ -1920,7 +1900,7 @@ class Decompiler {
 			return input;
 		if (floor(number) != number)
 			return input;
-		char buffer[64];
+		char buffer[64] = {0};
 		sprintf_s(buffer, "%d", (int)number);
 		return buffer;
 	}
@@ -1940,9 +1920,8 @@ class Decompiler {
 			return buffer;
 		}
 		// Single literal?
-		if (!strchr(s, ',')) {
+		if (!strchr(s, ','))
 			return s;
-		}
 		// Vector literal.
 		if (index == 0) {
 			string buffer = strchr(s, '(') + 1;
@@ -2046,10 +2025,9 @@ class Decompiler {
 				pos = 4;
 			else if (textype[0] == 0)
 				pos = 5;
-			else
-				logDecompileError("  unknown texture type for truncation: " + string(textype));
 			cpos = strrchr(op, '.');
-			cpos[pos] = 0;
+			if (cpos)
+				cpos[pos] = 0;
 		}
 	}
 
@@ -2096,10 +2074,9 @@ class Decompiler {
 			pos = 5;
 		else if (textype[0] == 0)
 			pos = 5;
-		else
-			logDecompileError("  unknown texture type for truncation: " + string(textype));
 		char *cpos = strrchr(op, '.');
-		cpos[pos] = 0;
+		if (cpos)
+			cpos[pos] = 0;
 	}
 
 	void remapTarget(char *target) {
@@ -2119,17 +2096,11 @@ class Decompiler {
 		// Translation for Hull Shader hardware inputs into standard HLSL control point variables
 		if (mShaderType.substr(0, 3) == "hs_") {
 			size_t ocpid = input.find("vOutputControlPointID");
-			if (ocpid != string::npos) {
+			if (ocpid != string::npos)
 				input.replace(ocpid, strlen("vOutputControlPointID"), "i");
-			}
-			size_t fiid = input.find("vForkInstanceId");
-			if (fiid != string::npos) {
-				input.replace(fiid, strlen("vForkInstanceId"), "0");
-			}
 			size_t prim = input.find("vPrim");
-			if (prim != string::npos) {
+			if (prim != string::npos)
 				input.replace(prim, strlen("vPrim"), "PatchID");
-			}
 			size_t vpos = 0;
 			while ((vpos = input.find("[r", vpos)) != string::npos) {
 				size_t dotPos = input.find('.', vpos);
@@ -2162,7 +2133,7 @@ class Decompiler {
 					if (baseVar.length() >= 2 && baseVar[baseVar.length() - 2] == '.')
 						baseVar = baseVar.substr(0, baseVar.length() - 2);
 
-					char castBuf[64];
+					char castBuf[64] = {0};
 					sprintf_s(castBuf, sizeof(castBuf), "(float%zu)%s", totalComps, baseVar.c_str());
 					return ret + castBuf + string(after + extraCount);
 				}
@@ -2186,11 +2157,11 @@ class Decompiler {
 	// This would generate a QNAN as float. Made the hex comparison more strict with 0x%x, and thus that will fail
 	// if it's an int type, and allow for converting that variant.
 	void convertHexToFloat(char *target) {
-		char convert[opcodeSize];
+		char convert[opcodeSize] = {0};
 		int count;
-		float lit[4];
-		int ilit[4];
-		int printed;
+		float lit[4] = {0};
+		int ilit[4] = {0};
+		int printed = 0;
 		if (target[0] == 'l') {
 			printed = sprintf_s(convert, sizeof(convert), "l(");
 			count = sscanf_s(target, "l(%x,%x,%x,%x)", (unsigned int *)&lit[0], (unsigned int *)&lit[1], (unsigned int *)&lit[2],
@@ -2200,24 +2171,26 @@ class Decompiler {
 					printed += sprintf_s(&convert[printed], sizeof(convert) - printed, "%f,", lit[i]);
 			} else {
 				count = sscanf_s(target, "l(%i,%i,%i,%i)", &ilit[0], &ilit[1], &ilit[2], &ilit[3]);
-				assert(count != 0);
-				for (int i = 0; i < count; i++)
-					printed += sprintf_s(&convert[printed], sizeof(convert) - printed, "%i,", ilit[i]);
+				if (count != 0) {
+					for (int i = 0; i < count; i++)
+						printed += sprintf_s(&convert[printed], sizeof(convert) - printed, "%i,", ilit[i]);
+				}
 			}
-			convert[printed - 1] = ')';
+			if (printed > 0)
+				convert[printed - 1] = ')';
 			strcpy_s(target, opcodeSize, convert);
 		}
 	}
 
 	char *_convertToIntegerType(char *target, bool isUnsigned, bool fixupCBs) {
-		char buffer[opcodeSize];
+		char buffer[opcodeSize] = {0};
 		int isMinus = target[0] == '-' ? 1 : 0;
 		const char *prefix = isUnsigned ? "uint" : "int";
 		if (!strncmp(target + isMinus, "int", 3) || !strncmp(target + isMinus, "uint", 4))
 			return target;
 		if (!strncmp(target + isMinus, "float", 5)) {
 			int size = 0;
-			float f0, f1, f2, f3;
+			float f0 = 0, f1 = 0, f2 = 0, f3 = 0;
 			sscanf_s(target + isMinus, "float%d(%f,%f,%f,%f)", &size, &f0, &f1, &f2, &f3);
 			buffer[0] = 0;
 			if (isMinus)
@@ -2372,7 +2345,7 @@ class Decompiler {
 									   viewDirectionDecl + strlen(viewDirectionDecl));
 					}
 					// Add view direction calculation.
-					char buf[512];
+					char buf[512] = {0};
 					if (screenToWorldMatrix1)
 						sprintf_s(buf, sizeof(buf), "  viewDirection = float3(%s);\n", BackProject_Vector1.c_str());
 					else
@@ -2387,7 +2360,7 @@ class Decompiler {
 							--writePos;
 						mOutput.insert(writePos, StereoDecl, StereoDecl + strlen(StereoDecl));
 						stereoParamsWritten = true;
-						char buffer[256];
+						char buffer[256] = {0};
 						sprintf_s(buffer, sizeof(buffer), "%s.x -= separation * (%s.w - convergence);\n", mSV_Position.c_str(),
 								  mSV_Position.c_str());
 						mOutput.insert(mOutput.end() - 1, buffer, buffer + strlen(buffer));
@@ -2432,7 +2405,7 @@ class Decompiler {
 							--writePos;
 							while (*writePos != '\n')
 								--writePos;
-							char buffer[256];
+							char buffer[256] = {0};
 							string outputReg = i->first;
 							if (outputReg.find('.') != string::npos)
 								outputReg = outputReg.substr(0, outputReg.find('.'));
@@ -2482,7 +2455,7 @@ class Decompiler {
 						pos += 3;
 						string depthBufferStatement(pos, endPos);
 						searchPos = endPos - mOutput.data();
-						char buf[512];
+						char buf[512] = {0};
 						if (!wposAvailable)
 							sprintf_s(buf, sizeof(buf),
 									  "float4 zpos4 = %s;\nfloat zTex = zpos4.%c;\nfloat zpos = %s;\nfloat wpos = 1.0 / zpos;\n",
@@ -2554,7 +2527,7 @@ class Decompiler {
 							wpos = mOutput.erase(wpos + (pos - mOutput.data()), wpos + (endPos - mOutput.data()));
 							const char ZPOS_REG[] = "zpos4";
 							wpos = mOutput.insert(wpos, ZPOS_REG, ZPOS_REG + strlen(ZPOS_REG));
-							char buf[256];
+							char buf[256] = {0};
 							sprintf_s(buf, sizeof(buf),
 									  "float4 zpos4 = %s;\nfloat zTex = zpos4.%c;\nfloat zpos = %s;\nfloat wpos = 1.0 / zpos;\n",
 									  depthBufferStatement.c_str(), ZRepair_DepthTextureReg2, ZRepair_ZPosCalc2.c_str());
@@ -2591,11 +2564,11 @@ class Decompiler {
 						char *bpos = pos;
 						while (*--bpos != ' ')
 							;
-						char buf[512];
+						char buf[512] = {0};
 						memcpy(buf, bpos + 1, pos - (bpos + 1));
 						buf[pos - (bpos + 1)] = 0;
 						applySwizzle(".xyz", buf);
-						char calcStatement[256];
+						char calcStatement[256] = {0};
 						sprintf_s(calcStatement, sizeof(calcStatement), ZRepair_WorldPosCalc.c_str(), buf);
 						sprintf_s(buf, sizeof(buf), "\nfloat3 worldPos = %s;\nfloat zpos = worldPos.z;\nfloat wpos = 1.0 / zpos;",
 								  calcStatement);
@@ -2659,7 +2632,7 @@ class Decompiler {
 					}
 
 					for (vector<string>::iterator invT = InvTransforms.begin(); invT != InvTransforms.end(); ++invT) {
-						char buf[128];
+						char buf[128] = {0};
 						sprintf_s(buf, sizeof(buf), " %s._m00", invT->c_str());
 						char *pos = strstr(mOutput.data(), buf);
 						if (pos) {
@@ -2733,7 +2706,7 @@ class Decompiler {
 								applySwizzle(".y", op3);
 								strcpy_s(op4, op1);
 								applySwizzle(".z", op4);
-								char buf[512];
+								char buf[512] = {0};
 								if (ObjectPos_MUL1.empty())
 									ObjectPos_MUL1 = string("1,1,1");
 								sprintf_s(
@@ -2789,7 +2762,7 @@ class Decompiler {
 								applySwizzle(".y", op3);
 								strcpy_s(op4, op1);
 								applySwizzle(".z", op4);
-								char buf[512];
+								char buf[512] = {0};
 								if (ObjectPos_MUL2.empty())
 									ObjectPos_MUL2 = string("1,1,1");
 								sprintf_s(
@@ -2832,7 +2805,7 @@ class Decompiler {
 							char *pos = std::min(std::min(pos1, pos2), pos3);
 							while (*--pos != '\n')
 								;
-							char buf[512];
+							char buf[512] = {0};
 							if (MatrixPos_MUL1.empty())
 								MatrixPos_MUL1 = string("1,1,1");
 							_snprintf_s(buf, 512, 512,
@@ -2868,8 +2841,8 @@ class Decompiler {
 	// cannot determine the actual size of a declaration without reflection data.
 	// It will mostly work, but generate hand-fix errors at times.
 	void CreateRawFormat(const string &texType, int bufIndex) {
-		char buffer[128];
-		char format[16];
+		char buffer[128] = {0};
+		char format[16] = {0};
 		sprintf_s(buffer, sizeof(buffer), "t%d", bufIndex);
 		mTextureNames[bufIndex] = buffer;
 		sscanf_s(op1, "(%[^,]", format, 16);
@@ -2883,14 +2856,14 @@ class Decompiler {
 	// General output routine while decoding shader, to automatically apply indenting to HLSL code.
 	// When we see a '{' or '}' we'll increase or decrease the indent.
 	void appendOutput(const char *line) {
-		char splitLine[1024];
+		char splitLine[1024] = {0};
 		const char *effectiveLine = line;
 		const char *eq = strchr(line, '=');
 
 		// Universal fix: split ANY instruction writing a vector into split output registers (e.g. o5.xyzw, o2.zw, etc.)
 		if (eq && mShaderType.substr(0, 3) != "hs_") {
 			int slot = -1;
-			char mask[16];
+			char mask[16] = {0};
 			const char *oPos = line;
 			while (oPos < eq) {
 				oPos = strchr(oPos, 'o');
@@ -2919,7 +2892,7 @@ class Decompiler {
 							if (firstNonSpace != string::npos)
 								expr = expr.substr(firstNonSpace);
 							string newLines = "";
-							char fdestAssign[512];
+							char fdestAssign[512] = {0};
 							sprintf_s(fdestAssign, sizeof(fdestAssign), "  fDest.%s = %s;\n", mask, expr.c_str());
 							newLines += fdestAssign;
 							for (size_t k = 0; k < strlen(mask); ++k) {
@@ -2929,7 +2902,7 @@ class Decompiler {
 								if (mRemappedOutputRegisters.find(singleComp) != mRemappedOutputRegisters.end()) {
 									target = mRemappedOutputRegisters[singleComp];
 								}
-								char compAssign[256];
+								char compAssign[256] = {0};
 								sprintf_s(compAssign, sizeof(compAssign), "  %s = fDest.%c;\n", target.c_str(), mask[k]);
 								newLines += compAssign;
 							}
@@ -2973,8 +2946,10 @@ class Decompiler {
 		mOutputRegisterValues.clear();
 		mBooleanRegisters.clear();
 		mCodeStartPos = mOutput.size();
+		mInForkLoop = false;
+		mForkPhaseCount = 0;
 
-		char buffer[2048];
+		char buffer[2048] = {0};
 		size_t pos = 0;
 		unsigned int iNr = 0;
 		bool skip_shader = false;
@@ -3082,9 +3057,17 @@ class Decompiler {
 			}
 			// First, check the Hull Shader phases so they aren't intercepted by the "hs_" check below
 			if (!strcmp(statement, "hs_control_point_phase")) {
+				if (mInForkLoop) {
+					appendOutput("  }\n");
+					mInForkLoop = false;
+				}
 				mHSPhase = 1;
 				nestCount = 1;
 			} else if (!strcmp(statement, "hs_fork_phase") || !strcmp(statement, "hs_join_phase")) {
+				if (mInForkLoop) {
+					appendOutput("  }\n");
+					mInForkLoop = false;
+				}
 				mHSPhase = 2;
 				nestCount = 1;
 			} else if (!strcmp(statement, "hs_decls")) {
@@ -3102,8 +3085,22 @@ class Decompiler {
 			} else if (!strcmp(statement, "hs_decls") || !strcmp(statement, "dcl_hs_max_tessfactor") ||
 					   !strcmp(statement, "dcl_input_control_point_count") || !strcmp(statement, "dcl_output_control_point_count") ||
 					   !strcmp(statement, "dcl_tessellator_partitioning") || !strcmp(statement, "dcl_tessellator_output_primitive") ||
-					   !strcmp(statement, "dcl_tessellator_domain") || !strcmp(statement, "dcl_hs_fork_phase_instance_count")) {
-				// Handled in ParseCodeOnlyShaderType or safely consumed without desyncing psInst.
+					   !strcmp(statement, "dcl_tessellator_domain")) {
+			} else if (!strcmp(statement, "dcl_hs_fork_phase_instance_count")) {
+				int instCount = atoi(op1);
+				char loopBuf[256] = {0};
+				if (instCount > 1) {
+					sprintf_s(loopBuf, sizeof(loopBuf),
+							  "  [unroll] for (uint _forkInst%d = 0; _forkInst%d < %d; ++_forkInst%d) {\n    uint4 vForkInstanceID = "
+							  "uint4(_forkInst%d, 0, 0, 0);\n    uint4 vForkInstanceId = vForkInstanceID;\n",
+							  mForkPhaseCount, mForkPhaseCount, instCount, mForkPhaseCount, mForkPhaseCount);
+				} else {
+					sprintf_s(loopBuf, sizeof(loopBuf),
+							  "  {\n    uint4 vForkInstanceID = uint4(0, 0, 0, 0);\n    uint4 vForkInstanceId = vForkInstanceID;\n");
+				}
+				appendOutput(loopBuf);
+				mInForkLoop = true;
+				mForkPhaseCount++;
 			} else if (!strcmp(statement, "dcl_immediateConstantBuffer")) {
 				sprintf_s(buffer, sizeof(buffer), "  const float4 icb[] =");
 				appendOutput(buffer);
@@ -3239,7 +3236,7 @@ class Decompiler {
 					if (i == mTextureNames.end()) {
 						sprintf_s(buffer, sizeof(buffer), "t%d", bufIndex);
 						mTextureNames[bufIndex] = buffer;
-						char format[16];
+						char format[16] = {0};
 						sscanf_s(op1, "(%[^,]", format, 16);
 						string form4 = string(format) + "4";
 						mTextureType[bufIndex] = "Texture2DMS<" + form4 + ">";
@@ -3391,20 +3388,38 @@ class Decompiler {
 				appendOutput(b);
 				continue;
 			} else if (!strcmp(statement, "dcl_indexrange")) {
+				char regNamePrefix[32] = {0};
 				int numIndex = 0;
+
+				int parsed = sscanf_s(op1, "%31[a-zA-Z]", regNamePrefix, (unsigned)_countof(regNamePrefix));
 				sscanf_s(op2, "%d", &numIndex);
-				sprintf_s(buffer, sizeof(buffer), "  float4 v[%d] = { ", numIndex);
-				for (int i = 0; i < numIndex; ++i)
-					sprintf_s(buffer + strlen(buffer), sizeof(buffer) - strlen(buffer), "v%d,", i);
-				buffer[strlen(buffer) - 1] = 0;
-				strcat_s(buffer, sizeof(buffer), " };\n");
-				appendOutput(buffer);
+
+				bool skipDecl = false;
+				if (mShaderType.substr(0, 3) == "hs_" || mShaderType.substr(0, 3) == "ds_") {
+					if (parsed == 1) {
+						// Skip systemic variables arrays we actively manage in Hull / Domain shaders
+						if (!strcmp(regNamePrefix, "v") || !strcmp(regNamePrefix, "o") || !strcmp(regNamePrefix, "p") ||
+							!strcmp(regNamePrefix, "w") || !strcmp(regNamePrefix, "vicp") || !strcmp(regNamePrefix, "vocp") ||
+							!strcmp(regNamePrefix, "vpc")) {
+							skipDecl = true;
+						}
+					}
+				}
+
+				if (!skipDecl && parsed == 1) {
+					sprintf_s(buffer, sizeof(buffer), "  float4 %s_array[%d] = { ", regNamePrefix, numIndex);
+					for (int i = 0; i < numIndex; ++i)
+						sprintf_s(buffer + strlen(buffer), sizeof(buffer) - strlen(buffer), "%s%d,", regNamePrefix, i);
+					buffer[strlen(buffer) - 1] = 0;
+					strcat_s(buffer, sizeof(buffer), " };\n");
+					appendOutput(buffer);
+				}
 			} else if (!strcmp(statement, "dcl_indexableTemp")) {
 				// Always returned 4, not actual index. ToDo: likely not always float4.
 				// format as: dcl_indexableTemp x0[40], 4
 				int numIndex = 0;
-				char varName[opcodeSize];
-				sscanf_s(op1, "%[^[][%d]", varName, opcodeSize, &numIndex);
+				char varName[opcodeSize] = {0};
+				sscanf_s(op1, "%[^[][%d]", varName, (unsigned)opcodeSize, &numIndex);
 				sprintf_s(buffer, sizeof(buffer), "  float4 %s[%d];\n", varName, numIndex);
 				appendOutput(buffer);
 			} else if (!strcmp(statement, "dcl_input")) {
@@ -3417,15 +3432,13 @@ class Decompiler {
 				sscanf_s(c + pos, "%s %d", statement, (int)sizeof(statement), &numTemps);
 				if (mShaderType.substr(0, 3) == "hs_") {
 					set<int> &activeSet = (mHSPhase == 1) ? mDeclaredTempsHS_Main : mDeclaredTempsHS_Fork;
-					for (int i = 0; i < numTemps; ++i) {
+					for (int i = 0; i < numTemps; ++i)
 						activeSet.insert(i);
-					}
 				} else {
 					if (numTemps > 0) {
 						string tempDecl = "  float4 ";
-						for (int i = 0; i < numTemps; ++i) {
+						for (int i = 0; i < numTemps; ++i)
 							tempDecl += "r" + to_string(i) + (i + 1 == numTemps ? ";\n" : ", ");
-						}
 						appendOutput(tempDecl.c_str());
 					}
 					// Note: helperDecl (bitmask, uiDest, fDest) is already declared with = 0 in mainFooter!
@@ -4150,13 +4163,12 @@ class Decompiler {
 						*pop1 = 0;
 						while (*++pop1) {
 							sprintf_s(op6, sizeof(op6), "%s.%c", op1, *pop1);
-							sprintf_s(
-								buffer, sizeof(buffer),
-								"  bitmask.%c = ((~(-1 << %s)) << %s) & 0xffffffff;  %s = (((uint)%s << %s) & bitmask.%c) | ((uint)%s & "
-								"~bitmask.%c);\n",
-								*pop1, ci(GetSuffix(op2, idx)).c_str(), ci(GetSuffix(op3, idx)).c_str(), writeTarget(op6),
-								ci(GetSuffix(op4, idx)).c_str(), ci(GetSuffix(op3, idx)).c_str(), *pop1, ci(GetSuffix(op5, idx)).c_str(),
-								*pop1);
+							sprintf_s(buffer, sizeof(buffer),
+									  "  bitmask.%c = ((~(-1 << %s)) << %s) & 0xffffffff;  %s = (((uint)%s << %s) & bitmask.%c) | "
+									  "((uint)%s & ~bitmask.%c);\n",
+									  *pop1, ci(GetSuffix(op2, idx)).c_str(), ci(GetSuffix(op3, idx)).c_str(), writeTarget(op6),
+									  ci(GetSuffix(op4, idx)).c_str(), ci(GetSuffix(op3, idx)).c_str(), *pop1,
+									  ci(GetSuffix(op5, idx)).c_str(), *pop1);
 							appendOutput(buffer);
 							++idx;
 						}
@@ -4589,9 +4601,10 @@ class Decompiler {
 							// we know, and add them to the bindInfo.
 							// e.g. from Batman and Witcher3:
 							//  resinfo_indexable(texture2d)(float,float,float,float)_uint r1.yw, l(0), t3.zxwy
-							char texType[opcodeSize];
-							char retType[opcodeSize];
-							int numInfo = sscanf_s(statement, "resinfo_indexable(%[^)])%s", texType, opcodeSize, retType, opcodeSize);
+							char texType[opcodeSize] = {0};
+							char retType[opcodeSize] = {0};
+							int numInfo = sscanf_s(statement, "resinfo_indexable(%[^)])%s", texType, (unsigned)opcodeSize, retType,
+												   (unsigned)opcodeSize);
 							bool isConstant = (!strcmp(op2, "l(0),"));
 
 							if ((numInfo == 2) && isConstant) {
@@ -4719,7 +4732,12 @@ class Decompiler {
 					case OPCODE_DERIV_RTY: emitDeriv("ddy"); break;
 
 					case OPCODE_RET:
-						if (mShaderType.substr(0, 3) != "hs_") {
+						if (mShaderType.substr(0, 3) == "hs_") {
+							if (mInForkLoop) {
+								appendOutput("  }\n");
+								mInForkLoop = false;
+							}
+						} else {
 							sprintf_s(buffer, sizeof(buffer), "  return;\n");
 							appendOutput(buffer);
 						}
@@ -4771,6 +4789,11 @@ class Decompiler {
 
 			NextLine(c, pos, size);
 			mLastStatement = instr;
+		}
+
+		if (mInForkLoop) {
+			appendOutput("  }\n");
+			mInForkLoop = false;
 		}
 
 		// Moved this out of Opcode_ret, because it's possible to have more than one ret in a shader.
@@ -4851,6 +4874,7 @@ class Decompiler {
 	// Adding .ini declaration, since declaring it doesn't cost anything and saves typing them in later.
 	void WriteAddOnDeclarations() {
 		string declaration = "\n\n// 3Dmigoto declarations\n";
+		declaration += "#define cmp -\n";
 
 		// Also inject the helper macro of 'cmp' to fix any boolean comparisons.
 		// This is a bit of a hack, but simply adds a "-" in front of the comparison,
@@ -4859,7 +4883,12 @@ class Decompiler {
 		//    r0.y = -(0 < r0.x);
 		// This allows us to avoid having helper routines, and needing different
 		// variants for different swizzle sizes, like .xy or .xyz.
-		declaration += "#define cmp -\n";
+		if (mShaderType.substr(0, 3) == "hs_") {
+			for (int k = 0; k < 32; k++) {
+				declaration += "#define o" + to_string(k) + " o[" + to_string(k) + "]\n";
+				declaration += "#define p" + to_string(k) + " p[" + to_string(k) + "]\n";
+			}
+		}
 
 		if (IniParamsReg >= 0)
 			declaration += "Texture1D<float4> IniParams : register(t" + std::to_string(IniParamsReg) + ");\n";
@@ -4892,10 +4921,8 @@ class Decompiler {
 		finalOut.insert(finalOut.end(), structs.begin(), structs.end());
 
 		string oDecls = "  uint4 bitmask = 0, uiDest = 0;\n  float4 fDest = 0;\n";
-		for (int k = 0; k < 32; k++) {
-			oDecls += "  float4 o" + to_string(k) + " = 0;\n";
-			oDecls += "  float4 p" + to_string(k) + " = 0;\n";
-		}
+		oDecls += "  float4 o[32];\n  float4 p[32];\n";
+		oDecls += "  [unroll] for (int _i = 0; _i < 32; ++_i) { o[_i] = 0; p[_i] = 0; }\n";
 
 		string tempsMain = "";
 		if (!mDeclaredTempsHS_Main.empty()) {
@@ -4924,8 +4951,8 @@ class Decompiler {
 
 		string forkPack = "\n";
 		for (size_t k = 0; k < mHSPatchConstantAssignments.size(); k++) {
-			forkPack += "  patchConsts." + mHSPatchConstantAssignments[k].targetField + " = o" +
-						to_string(mHSPatchConstantAssignments[k].slot) + "." + mHSPatchConstantAssignments[k].mask + ";\n";
+			forkPack += "  patchConsts." + mHSPatchConstantAssignments[k].targetField + " = o[" +
+						to_string(mHSPatchConstantAssignments[k].slot) + "]." + mHSPatchConstantAssignments[k].mask + ";\n";
 		}
 		string forkFooter = forkPack + "  return patchConsts;\n}\n\n";
 		finalOut.insert(finalOut.end(), forkFooter.begin(), forkFooter.end());
@@ -4952,7 +4979,7 @@ class Decompiler {
 
 		string mainPack = "\n";
 		for (size_t k = 0; k < mHSCPOutputAssignments.size(); k++) {
-			mainPack += "  output." + mHSCPOutputAssignments[k].targetField + " = o" + to_string(mHSCPOutputAssignments[k].slot) + "." +
+			mainPack += "  output." + mHSCPOutputAssignments[k].targetField + " = o[" + to_string(mHSCPOutputAssignments[k].slot) + "]." +
 						mHSCPOutputAssignments[k].mask + ";\n";
 		}
 		string mainFooter = mainPack + "  return output;\n}\n";
@@ -4965,18 +4992,11 @@ class Decompiler {
 const string DecompileBinaryHLSL(ParseParameters &params, bool &patched, std::string &shaderModel, bool &errorOccurred) {
 	Decompiler d;
 
-	d.mCodeStartPos = 0;
-	d.mCorrectedIndexRegisters.clear();
-	d.mOutput.reserve(16 * 1024);
-	d.mErrorOccurred = false;
-	d.mShaderType = "unknown";
-
 	// Copy parse parameters
 	d.StereoParamsReg = params.StereoParamsReg;
 	d.IniParamsReg = params.IniParamsReg;
 	d.mFixSvPosition = params.fixSvPosition;
 	d.mRecompileVs = params.recompileVs;
-	d.mPatched = false;
 	d.ZRepair_DepthTexture1 = params.ZRepair_DepthTexture1;
 	d.ZRepair_DepthTexture2 = params.ZRepair_DepthTexture2;
 	d.ZRepair_DepthTextureReg1 = params.ZRepair_DepthTextureReg1;
