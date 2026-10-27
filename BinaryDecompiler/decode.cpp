@@ -978,12 +978,14 @@ const uint32_t *DeocdeInstruction(const uint32_t *pui32Token, Instruction *psIns
 	}
 	case OPCODE_MSAD:
 	default: {
-		// We can hit this in practice in shaders with unsupported
 		// instructions (particularly domain, geometry & hull shaders).
 		// Throw an explicit exception now, otherwise we will continue to
 		// use the uninitialised ui32NumOperands and process garbage.
+		// We’ve commented out the `throw` so the decompiler doesn’t crash on unknown HS opcodes!
 		LogInfo("    error parsing shader> unsupported opcode %i\n", eOpcode);
-		throw decompileError;
+		// throw decompileError;
+		psInst->ui32NumOperands = 0;
+		break;
 	}
 	}
 
@@ -1045,6 +1047,7 @@ const uint32_t *DecodeHullShaderJoinPhase(const uint32_t *pui32Tokens, Shader *p
 		Instruction instr;
 		const uint32_t *nextInstr = DeocdeInstruction(pui32CurrentToken, &instr, psShader);
 		psInst.push_back(instr);
+		psShader->psInst.push_back(instr);
 
 #ifdef _DEBUG
 		if (nextInstr == pui32CurrentToken) {
@@ -1108,6 +1111,8 @@ const uint32_t *DecodeHullShaderForkPhase(const uint32_t *pui32Tokens, Shader *p
 	while (pui32CurrentToken < (psShader->pui32FirstToken + ui32ShaderLength)) {
 		const uint32_t *nextInstr = DeocdeInstruction(pui32CurrentToken, psInst, psShader);
 
+		psShader->psInst.push_back(*psInst);
+
 #ifdef _DEBUG
 		if (nextInstr == pui32CurrentToken) {
 			ASSERT(0);
@@ -1119,6 +1124,11 @@ const uint32_t *DecodeHullShaderForkPhase(const uint32_t *pui32Tokens, Shader *p
 
 		if (psInst->eOpcode == OPCODE_HS_FORK_PHASE) {
 			pui32CurrentToken = DecodeHullShaderForkPhase(pui32CurrentToken, psShader);
+			return pui32CurrentToken;
+		}
+		// Check for transition to the Join phase:
+		if (psInst->eOpcode == OPCODE_HS_JOIN_PHASE) {
+			pui32CurrentToken = DecodeHullShaderJoinPhase(pui32CurrentToken, psShader);
 			return pui32CurrentToken;
 		}
 
@@ -1168,6 +1178,8 @@ const uint32_t *DecodeHullShaderControlPointPhase(const uint32_t *pui32Tokens, S
 
 	while (pui32CurrentToken < (psShader->pui32FirstToken + ui32ShaderLength)) {
 		const uint32_t *nextInstr = DeocdeInstruction(pui32CurrentToken, psInst, psShader);
+
+		psShader->psInst.push_back(*psInst);
 
 #ifdef _DEBUG
 		if (nextInstr == pui32CurrentToken) {
