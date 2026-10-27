@@ -3194,7 +3194,31 @@ class Decompiler {
 			// as the most common use case. But only for this case where the game is being hostile.
 			// It will probably require hand tuning to correct usage of those texture registers.
 			// Also unlikely to work for the (mixed,mixed,mixed,mixed) case. <mixed4> will be wrong.
-			else if (!strcmp(statement, "dcl_resource_texture2d")) {
+			else if (!strcmp(statement, "dcl_resource_texture1d")) {
+				if (op2[0] == 't' || op2[0] == 'T') {
+					int bufIndex = 0;
+					if (sscanf_s(op2 + 1, "%d", &bufIndex) != 1) {
+						logDecompileError("Error parsing texture1d register index: " + string(op2));
+						NextLine(c, pos, size);
+						continue;
+					}
+					map<int, string>::iterator i = mTextureNames.find(bufIndex);
+					if (i == mTextureNames.end())
+						CreateRawFormat("Texture1D", bufIndex);
+				}
+			} else if (!strcmp(statement, "dcl_resource_texture1darray")) {
+				if (op2[0] == 't' || op2[0] == 'T') {
+					int bufIndex = 0;
+					if (sscanf_s(op2 + 1, "%d", &bufIndex) != 1) {
+						logDecompileError("Error parsing texture1darray register index: " + string(op2));
+						NextLine(c, pos, size);
+						continue;
+					}
+					map<int, string>::iterator i = mTextureNames.find(bufIndex);
+					if (i == mTextureNames.end())
+						CreateRawFormat("Texture1DArray", bufIndex);
+				}
+			} else if (!strcmp(statement, "dcl_resource_texture2d")) {
 				if (op2[0] == 't' || op2[0] == 'T') {
 					int bufIndex = 0;
 					if (sscanf_s(op2 + 1, "%d", &bufIndex) != 1) {
