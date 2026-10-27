@@ -1,4 +1,4 @@
-// DecompileHLSL.cpp : Translates DirectX 11 DXBC assembly into valid, re-compilable HLSL.
+﻿// DecompileHLSL.cpp : Translates DirectX 11 DXBC assembly into valid, re-compilable HLSL.
 // Target supports Vertex (VS), Pixel (PS), Geometry (GS), Hull (HS), Domain (DS), and Compute (CS) stages.
 //
 // The goal with this file is too keep it as much C++ as possible.
@@ -1124,6 +1124,8 @@ class Decompiler {
 
 					size_t arrayPos = structName.find('[');
 					if (arrayPos == string::npos) {
+						// 1. Individual structures (sLightParam0, sLightParam1...):
+						// Field offsets in FXC are already absolute; we simply add the structure name
 						if (structLevel >= 0) {
 							for (vector<int>::iterator it = pendingStructAttributes[structLevel].begin();
 								 it != pendingStructAttributes[structLevel].end(); ++it) {
@@ -1133,7 +1135,9 @@ class Decompiler {
 							}
 						}
 					} else {
-						int arraySize;
+						// 2. Arrays of structures (sOutlineDetector[4]...):
+						// Replicate the fields across all indices k, while preserving the data type DT_float
+						int arraySize = 0;
 						if (sscanf_s(structName.c_str() + arrayPos + 1, "%d", &arraySize) != 1) {
 							logDecompileError("Error parsing array size: " + structName);
 							NextLine(c, pos, size);
@@ -1145,13 +1149,25 @@ class Decompiler {
 							for (vector<int>::iterator j = pendingStructAttributes[structLevel].begin();
 								 j != pendingStructAttributes[structLevel].end(); ++j)
 								structSize += getDataTypeSize(mCBufferData[*j].bt);
+							structSize = ((structSize + 15) / 16) * 16;
+
+							// Save the base fields of the zero element before generating the array
+							vector<pair<int, BufferEntry>> baseMembers;
+							for (int baseKey : pendingStructAttributes[structLevel]) {
+								baseMembers.push_back({baseKey, mCBufferData[baseKey]});
+							}
+
 							for (int k = arraySize - 1; k >= 0; --k) {
 								sprintf_s(buffer, sizeof(buffer), "%s[%d].", structName.c_str(), k);
-								for (vector<int>::iterator j = pendingStructAttributes[structLevel].begin();
-									 j != pendingStructAttributes[structLevel].end(); ++j) {
-									mCBufferData[*j + k * structSize].Name = buffer + mCBufferData[*j].Name;
+								for (const auto &bm : baseMembers) {
+									int baseKey = bm.first;
+									int targetKey = baseKey + k * structSize;
+									BufferEntry entryCopy = bm.second;
+									entryCopy.Name = buffer + entryCopy.Name;
+									mCBufferData[targetKey] = entryCopy;
+
 									if (structLevel > 0)
-										pendingStructAttributes[structLevel - 1].push_back(*j + k * structSize);
+										pendingStructAttributes[structLevel - 1].push_back(targetKey);
 								}
 							}
 						}
